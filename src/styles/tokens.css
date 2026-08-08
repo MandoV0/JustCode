@@ -1,0 +1,110 @@
+:root {
+  /* Spacing */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+
+  /* Layout */
+  --sidebar-width: 272px;
+  --composer-height: 96px;
+
+  /* Radius */
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-sans:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+
+  --font-mono:
+    "Cascadia Code",
+    "JetBrains Mono",
+    Consolas,
+    "Courier New",
+    monospace;
+
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+
+
+  /* Background Layers */
+  --bg-0: #0d1117; /* App */
+  --bg-1: #161b22; /* Sidebar */
+  --bg-2: #21262d; /* Cards */
+  --bg-3: #2d333b; /* Hover */
+  --bg-4: #343b44; /* Active */
+
+
+  /* Borders */
+  --border: #30363d;
+  --border-strong: #444c56;
+
+
+  /* Text */
+  --text-0: #e6edf3;
+  --text-1: #adbac7;
+  --text-2: #768390;
+  --text-disabled: #545d68;
+
+
+  /* Accent */
+  --accent: #4493f8;
+  --accent-hover: #5aa0ff;
+  --accent-active: #2f81f7;
+
+  --accent-soft: rgba(68, 147, 248, 0.15);
+
+
+  /* Semantic Colors */
+  --green: #57ab5a;
+  --green-soft: rgba(87, 171, 90, 0.15);
+
+  --yellow: #d29922;
+  --yellow-soft: rgba(210, 153, 34, 0.15);
+
+  --purple: #bc8cff;
+  --purple-soft: rgba(188, 140, 255, 0.15);
+
+  --red: #f85149;
+  --red-soft: rgba(248, 81, 73, 0.15);
+
+
+  /* AI / Chat Specific */
+  --user-message: #1f6feb;
+  --assistant-message: var(--bg-2);
+
+  --code-background: #010409;
+
+  --diff-add:rgba(46, 160, 67, 0.2);
+  --diff-remove:rgba(248, 81, 73, 0.2);
+
+  /* Components */
+  --button-height-sm: 28px;
+  --button-height-md: 36px;
+  --button-height-lg: 44px;
+
+  /* Effects */
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.25);
+
+  --shadow-composer: 0 -4px 24px rgba(0, 0, 0, 0.25);
+
+
+  /* Animation */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+}

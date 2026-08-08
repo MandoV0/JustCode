@@ -1,0 +1,97 @@
+.composer-box {
+  display: grid;
+  grid-template-rows: 1fr auto;
+
+  gap: var(--space-2);
+
+  padding: var(--space-2);
+  margin: var(--space-2);
+
+  background: var(--bg-2);
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+
+  transition: border-color var(--transition-fast);
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent);
+}
+
+.composer-input {
+  width: 100%;
+
+  min-height: 40px;
+  max-height: 160px;
+
+  resize: none;
+
+  border: none;
+  outline: none;
+
+  background: transparent;
+
+  color: var(--text-0);
+
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+}
+
+.composer-input::placeholder {
+  color: var(--text-2);
+}
+
+.composer-actions {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+
+  align-items: center;
+
+  gap: var(--space-2);
+}
+
+.composer-icon-btn,
+.composer-send-btn {
+  width: 36px;
+  height: 36px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: none;
+  border-radius: var(--radius-m);
+
+  cursor: pointer;
+
+  transition: background var(--transition-fast);
+}
+
+.composer-icon-btn {
+  background: transparent;
+}
+
+.composer-icon-btn:hover {
+  background: var(--bg-3);
+}
+
+.composer-send-btn {
+  background: var(--accent);
+}
+
+.composer-send-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.composer-send-btn:disabled {
+  background: var(--bg-3);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.composer-icon-btn img,
+.composer-send-btn img {
+  width: 18px;
+  height: 18px;
+}

@@ -1,0 +1,58 @@
+# Environment files
+.env
+.env.*
+*.env
+
+# Markdown documentation files
+*.md
+*.MD
+
+# Logs
+*.log
+LOG
+LOG.old
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Temporary files & folders
+tmp/
+temp/
+*.tmp
+.cache/
+
+# Dependencies & Node
+node_modules/
+bun.lockb
+
+# Build outputs & .NET / C# binaries
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+dist/
+dist-ssr/
+build/
+target/
+*.user
+*.userossc
+*.sln.docstates
+*.userprefs
+
+# WebView2 data & cache
+EBWebView/
+*.WebView2/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sw?
