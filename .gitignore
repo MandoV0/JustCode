@@ -3,10 +3,6 @@
 .env.*
 *.env
 
-# Markdown documentation files
-*.md
-*.MD
-
 # Logs
 *.log
 LOG
