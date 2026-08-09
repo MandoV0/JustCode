@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import "./ChatView.css";
 
 export interface ChatMessage {
+    id: string;
     role: "user" | "assistant";
     text: string;
 }
@@ -45,8 +46,8 @@ export default function ChatView({ messages, isLoading, error }: ChatViewProps) 
                     </div>
                 )}
 
-                {messages.map((message, i) => (
-                    <div key={i} className={`message ${message.role}`}>
+                {messages.map((message) => (
+                    <div key={message.id} className={`message ${message.role}`}>
                         <div className="message-bubble">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                 {message.text}

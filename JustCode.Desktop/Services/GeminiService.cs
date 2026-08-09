@@ -1,182 +1,154 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using JustCode.Infrastructure;
 
 namespace JustCode.Services;
 
-internal sealed record ChatTurn(string Role, string Text);
+internal sealed record GeminiInteractionResponse(
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("steps")] List<GeminiStepDto>? Steps,
+    [property: JsonPropertyName("error")] GeminiErrorDto? Error
+);
+
+internal sealed record GeminiStepDto(
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("call_id")] string? CallId,
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("arguments")] JsonElement? Arguments,
+    [property: JsonPropertyName("content")] List<GeminiContentBlockDto>? Content
+);
+
+internal sealed record GeminiContentBlockDto(
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("text")] string? Text
+);
+
+internal sealed record GeminiErrorDto([property: JsonPropertyName("message")] string? Message);
+
+internal sealed record GeminiChatResult(string Text, string InteractionId);
+
+internal sealed record GeminiToolDeclaration(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("parameters")] object Parameters
+);
+
+internal sealed record GeminiRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("input")] object[] Input,
+    [property: JsonPropertyName("tools")] GeminiToolDeclaration[] Tools,
+    [property: JsonPropertyName("previous_interaction_id")] string? PreviousInteractionId = null
+);
 
 internal sealed class GeminiService
 {
     private const string ApiBase = "https://generativelanguage.googleapis.com/v1beta";
     private const string DefaultModel = "gemini-3.6-flash";
+    private const int MaxToolRounds = 10;
 
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(120) };
+
+    private readonly Dictionary<string, ITool> _tools;
+    private readonly GeminiToolDeclaration[] _toolDeclarations;
+
+    public GeminiService(List<ITool> tools)
     {
-        Timeout = TimeSpan.FromSeconds(120)
-    };
+        _tools = tools.ToDictionary(t => t.Name);
+        _toolDeclarations = tools
+            .Select(t => new GeminiToolDeclaration("function", t.Name, t.Description, t.ParameterSchema))
+            .ToArray();
+    }
 
-    public async Task<string> ChatAsync(List<ChatTurn> history, string prompt)
+    public async Task<GeminiChatResult> ChatAsync(
+        List<ChatTurn>? history,
+        string prompt,
+        string? previousInteractionId = null,
+        CancellationToken cancellationToken = default)
     {
-        DebugLog.Write("=== Gemini ChatAsync START ===");
+        var key = EnvLoader.Require("GEMINI_API_KEY");
+        var model = EnvLoader.Get("GEMINI_MODEL") is { Length: > 0 } m ? m : DefaultModel;
 
-        try
+        var inputList = (history ?? [])
+            .Select(t => (object)new
+            {
+                type = t.Role is "assistant" or "model" ? "model_output" : "user_input",
+                content = new[] { TextBlock(t.Text) }
+            })
+            .Append(new { type = "user_input", content = new[] { TextBlock(prompt) } })
+            .ToList();
+
+        var interactionId = previousInteractionId;
+
+        for (var round = 0; round < MaxToolRounds; round++)
         {
-            DebugLog.Write("Loading API key...");
+            var body = new GeminiRequest(model, [.. inputList], _toolDeclarations, interactionId);
 
-            var key = EnvLoader.Require(
-                "GEMINI_API_KEY",
-                "GEMINI_API_KEY is not set");
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{ApiBase}/interactions");
+            req.Headers.TryAddWithoutValidation("x-goog-api-key", key);
+            req.Content = new StringContent(JsonSerializer.Serialize(body, Json.Options), Encoding.UTF8, "application/json");
 
-            DebugLog.Write("API key loaded");
+            using var res = await Http.SendAsync(req, cancellationToken);
+            var raw = await res.Content.ReadAsStringAsync(cancellationToken);
+            var dto = JsonSerializer.Deserialize<GeminiInteractionResponse>(raw, Json.Options);
 
-            var configuredModel = EnvLoader.Get("GEMINI_MODEL");
-
-            var model = string.IsNullOrWhiteSpace(configuredModel)
-                ? DefaultModel
-                : configuredModel;
-
-            DebugLog.Write($"Using model: {model}");
-            DebugLog.Write($"History turns: {history.Count}");
-            DebugLog.Write($"Prompt length: {prompt.Length}");
-
-            var contents = new List<object>();
-
-            foreach (var turn in history)
+            if (!res.IsSuccessStatusCode)
             {
-                contents.Add(new
-                {
-                    role = turn.Role == "user" ? "user" : "model",
-                    parts = new object[]
-                    {
-                        new { text = turn.Text }
-                    }
-                });
+                var msg = dto?.Error?.Message ?? $"Gemini API returned status {(int)res.StatusCode}";
+                DebugLog.Write($"Gemini API error ({(int)res.StatusCode}): {msg}");
+                throw new InvalidOperationException(msg);
             }
 
-            contents.Add(new
+            if (dto?.Id is not { } id)
+                throw new InvalidOperationException("Gemini returned a response without an ID.");
+
+            interactionId = id;
+
+            var lastStep = dto.Steps?.LastOrDefault();
+            if (lastStep?.Type == "function_call")
             {
-                role = "user",
-                parts = new object[]
-                {
-                    new { text = prompt }
-                }
-            });
+                if (lastStep.Name is null || !_tools.TryGetValue(lastStep.Name, out var tool))
+                    throw new InvalidOperationException($"Gemini requested unknown function: {lastStep.Name}");
 
-            var url = $"{ApiBase}/models/{model}:generateContent";
+                DebugLog.Write($"Gemini tool call round {round + 1}: {lastStep.Name}");
 
-            DebugLog.Write($"Request URL: {url}");
-            DebugLog.Write("Building HTTP request...");
+                var result = lastStep.Arguments is { } args
+                    ? await tool.ExecuteAsync(args, cancellationToken)
+                    : ToolResult.Error($"{lastStep.Name} called with no arguments.");
 
-            using var request = new HttpRequestMessage(
-                HttpMethod.Post,
-                url);
-
-            request.Headers.TryAddWithoutValidation(
-                "x-goog-api-key",
-                key);
-
-            var json = JsonSerializer.Serialize(new
-            {
-                contents
-            });
-
-            DebugLog.Write($"Request JSON length: {json.Length}");
-
-            request.Content = new StringContent(
-                json,
-                Encoding.UTF8,
-                "application/json");
-
-            DebugLog.Write("Sending request to Gemini...");
-
-            using var response = await Http.SendAsync(request);
-
-            DebugLog.Write(
-                $"Gemini responded. Status: {(int)response.StatusCode} {response.StatusCode}");
-
-            var raw = await response.Content.ReadAsStringAsync();
-
-            DebugLog.Write($"Response length: {raw.Length}");
-
-            if (raw.Length < 500)
-            {
-                DebugLog.Write($"Response body: {raw}");
+                var callId = lastStep.CallId ?? lastStep.Id;
+                inputList = [new { type = "function_result", name = lastStep.Name, call_id = callId, result = new[] { TextBlock(result.Output) } }];
+                continue;
             }
 
-            DebugLog.Write("Parsing JSON...");
-
-            using var doc = JsonDocument.Parse(raw);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                DebugLog.Write("Gemini returned an error status");
-
-                var message =
-                    doc.RootElement.TryGetProperty("error", out var error)
-                    && error.TryGetProperty("message", out var m)
-                    && m.GetString() is { Length: > 0 } msg
-                        ? msg
-                        : $"Gemini API returned status {(int)response.StatusCode}";
-
-                DebugLog.Write($"Error message: {message}");
-
-                throw new InvalidOperationException(message);
-            }
-
-            DebugLog.Write("Extracting candidates...");
-
-            if (!doc.RootElement.TryGetProperty("candidates", out var candidates))
-            {
-                throw new InvalidOperationException(
-                    "Gemini response has no candidates");
-            }
-
-            if (candidates.GetArrayLength() == 0)
-            {
-                throw new InvalidOperationException(
-                    "Gemini returned zero candidates");
-            }
-
-            var candidate = candidates[0];
-
-            if (!candidate.TryGetProperty("content", out var content))
-            {
-                throw new InvalidOperationException(
-                    "Gemini candidate has no content");
-            }
-
-            if (!content.TryGetProperty("parts", out var parts))
-            {
-                throw new InvalidOperationException(
-                    "Gemini content has no parts");
-            }
-
-            var text = string.Concat(
-                parts.EnumerateArray()
-                    .Select(part =>
-                        part.TryGetProperty("text", out var t)
-                            ? t.GetString()
-                            : string.Empty));
-
-            DebugLog.Write($"Extracted text length: {text.Length}");
-
+            var text = ExtractText(dto.Steps);
             if (string.IsNullOrWhiteSpace(text))
-            {
-                throw new InvalidOperationException(
-                    "Gemini returned empty text");
-            }
+                throw new InvalidOperationException("Gemini returned no text output.");
 
-            DebugLog.Write("=== Gemini ChatAsync SUCCESS ===");
-
-            return text;
+            return new GeminiChatResult(text, interactionId);
         }
-        catch (Exception ex)
-        {
-            DebugLog.Write($"=== Gemini FAILED ===");
-            DebugLog.Write(ex.ToString());
 
-            throw;
-        }
+        throw new InvalidOperationException($"Gemini tool call loop exceeded {MaxToolRounds} rounds without a final response.");
+    }
+
+    public Task<GeminiChatResult> ChatAsync(string prompt, string? previousInteractionId = null, CancellationToken cancellationToken = default)
+        => ChatAsync(null, prompt, previousInteractionId, cancellationToken);
+
+    private static object TextBlock(string text) => new { type = "text", text };
+
+    private static string ExtractText(List<GeminiStepDto>? steps)
+    {
+        if (steps is null or []) return string.Empty;
+
+        var from = steps.FindLastIndex(s => s.Type == "function_result") + 1;
+        var builder = new StringBuilder();
+
+        foreach (var step in steps.Skip(from).Where(s => s.Type == "model_output" && s.Content is not null))
+            foreach (var block in step.Content!.Where(c => c.Type == "text" && !string.IsNullOrEmpty(c.Text)))
+                builder.Append(block.Text);
+
+        return builder.ToString();
     }
 }

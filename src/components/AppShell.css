@@ -35,6 +35,10 @@ body {
   display: grid;
   grid-template-rows: 1fr auto;
   background: var(--bg-0);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-reopen {

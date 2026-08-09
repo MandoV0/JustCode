@@ -11,7 +11,7 @@ internal sealed class Session
     public string Title { get; set; } = string.Empty;
     public long CreatedAt { get; set; }
     public long UpdatedAt { get; set; }
-    public List<SessionMessage> Messages { get; set; } = new();
+    public List<SessionMessage> Messages { get; set; } = [];
 }
 
 internal sealed class SessionSummary
@@ -22,9 +22,7 @@ internal sealed class SessionSummary
     public int MessageCount { get; set; }
 }
 
-/// <summary>
-/// One JSON file per chat session in <app data>/sessions/{id}.json.
-/// </summary>
+/// <summary>One JSON file per chat session in %AppData%/Roaming/JustCode/sessions/{id}.json.</summary>
 internal sealed class SessionService
 {
     private readonly string _dir;
@@ -35,66 +33,51 @@ internal sealed class SessionService
         Directory.CreateDirectory(_dir);
     }
 
-    public List<SessionSummary> List()
-    {
-        return Directory
-            .EnumerateFiles(_dir, "*.json")
+    public List<SessionSummary> List() =>
+        Directory.EnumerateFiles(_dir, "*.json")
             .Select(path =>
             {
                 try
                 {
-                    var session = JsonSerializer.Deserialize<Session>(File.ReadAllText(path), Json.Options);
-                    if (session is null)
+                    var s = JsonSerializer.Deserialize<Session>(File.ReadAllText(path), Json.Options);
+                    return s is null ? null : new SessionSummary
                     {
-                        return null;
-                    }
-                    return new SessionSummary
-                    {
-                        Id = session.Id,
-                        Title = session.Title,
-                        UpdatedAt = session.UpdatedAt,
-                        MessageCount = session.Messages.Count,
+                        Id = s.Id,
+                        Title = s.Title,
+                        UpdatedAt = s.UpdatedAt,
+                        MessageCount = s.Messages.Count,
                     };
                 }
-                catch
+                catch (Exception ex)
                 {
+                    DebugLog.Write($"Failed to read session '{path}': {ex.Message}");
                     return null;
                 }
             })
-            .Where(s => s is not null)
-            .OrderByDescending(s => s!.UpdatedAt)
-            .Select(s => s!)
+            .OfType<SessionSummary>()
+            .OrderByDescending(s => s.UpdatedAt)
             .ToList();
-    }
 
     public Session Load(string id)
     {
         var path = PathFor(id);
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Session '{id}' not found");
-        }
         return JsonSerializer.Deserialize<Session>(File.ReadAllText(path), Json.Options)
-            ?? throw new InvalidOperationException($"Session '{id}' could not be read");
+            ?? throw new InvalidOperationException($"Session '{id}' could not be read.");
     }
 
     public void Save(Session session)
     {
         var path = PathFor(session.Id);
         var temp = path + ".tmp";
-
-        var json = JsonSerializer.Serialize(session, Json.Options);
-        File.WriteAllText(temp, json);
+        File.WriteAllText(temp, JsonSerializer.Serialize(session, Json.Options));
         File.Move(temp, path, overwrite: true);
     }
+
 
     public void Delete(string id)
     {
         var path = PathFor(id);
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
+        if (File.Exists(path)) File.Delete(path);
     }
 
     private string PathFor(string id) => Path.Combine(_dir, $"{id}.json");

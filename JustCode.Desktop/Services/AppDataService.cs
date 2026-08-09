@@ -12,21 +12,22 @@ internal sealed class AppDataService
 
     public AppDataService()
     {
-        string baseDir = OperatingSystem.IsWindows()
-            ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
-            : OperatingSystem.IsMacOS()
-                ? Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "Library",
-                    "Application Support")
-                : Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg
-                    ? xdg
-                    : Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                        ".local",
-                        "share");
-
-        Root = Path.Combine(baseDir, "JustCode");
+        Root = Path.Combine(ResolveBaseDir(), "JustCode");
         Directory.CreateDirectory(Root);
+    }
+
+    private static string ResolveBaseDir()
+    {
+        if (OperatingSystem.IsWindows())
+            return Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (OperatingSystem.IsMacOS())
+            return Path.Combine(home, "Library", "Application Support");
+
+        return Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg
+            ? xdg
+            : Path.Combine(home, ".local", "share");
     }
 }

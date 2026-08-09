@@ -1,6 +1,7 @@
 type Pending = {
     resolve: (value: unknown) => void;
     reject: (reason: Error) => void;
+    timer: number;
 };
 
 type BridgeMessage = {
@@ -34,16 +35,17 @@ export interface Session {
 
 let nextId = 1;
 const pending = new Map<number, Pending>();
+const DEFAULT_REQUEST_TIMEOUT_MS = 60000*50;
 
-const waitForNativeBridge = new Promise<void>((resolve) => {
+const waitForNativeBridge = new Promise<void>((resolve, reject) => {
     const started = Date.now();
     const timer = window.setInterval(() => {
         if (typeof (window as unknown as Record<string, unknown>).invokeCSharpAction === "function") {
             window.clearInterval(timer);
             resolve();
-        } else if (Date.now() - started > 5000) {
+        } else if (Date.now() - started > 5000*50) {
             window.clearInterval(timer);
-            resolve();
+            reject(new Error("Native bridge unavailable: invokeCSharpAction was not found within 5000ms"));
         }
     }, 25);
 });
@@ -61,16 +63,38 @@ function postToNative(message: object) {
 export async function invoke<T = unknown>(
     cmd: string,
     args?: Record<string, unknown>,
+    timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
     await waitForNativeBridge;
     const id = nextId++;
 
     return new Promise<T>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+            if (pending.has(id)) {
+                pending.delete(id);
+                reject(new Error(`Native bridge request timed out for command '${cmd}' (id: ${id})`));
+            }
+        }, timeoutMs);
+
         pending.set(id, {
-            resolve: (value) => resolve(value as T),
-            reject,
+            resolve: (value) => {
+                window.clearTimeout(timer);
+                resolve(value as T);
+            },
+            reject: (reason) => {
+                window.clearTimeout(timer);
+                reject(reason);
+            },
+            timer,
         });
-        postToNative({ id, cmd, args });
+
+        try {
+            postToNative({ id, cmd, args });
+        } catch (err) {
+            window.clearTimeout(timer);
+            pending.delete(id);
+            reject(err instanceof Error ? err : new Error(String(err)));
+        }
     });
 }
 

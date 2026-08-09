@@ -1,9 +1,9 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 /// <summary>
 /// Available Tool Interface for LLMs.
 /// </summary>
-public interface Tool
+public interface ITool
 {
     string Name { get; }
     string Description { get; }

@@ -6,23 +6,20 @@ using JustCode.Services;
 
 namespace JustCode.Bridge;
 
-/// <summary>
-/// Bidirectional messaging bridge between the web frontend and the C# backend.
-/// JS -> C#:  invokeCSharpAction(JSON.stringify({ id, cmd, args }))   (injected by Avalonia.Controls.WebView)
-/// C# -> JS:  window.justcodePostMessage({ kind: "response", id, ok, data | error })
-/// </summary>
 internal sealed class Bridge
 {
     private readonly NativeWebView _webView;
     private readonly GeminiService _gemini;
+    private readonly OpenAIService _deepseek;
     private readonly SessionService _sessions;
     private readonly AppDataService _appData;
     private LocalServer? _server;
 
-    public Bridge(NativeWebView webView, GeminiService gemini, SessionService sessions, AppDataService appData)
+    public Bridge(NativeWebView webView, GeminiService gemini, OpenAIService deepseek, SessionService sessions, AppDataService appData)
     {
         _webView = webView;
         _gemini = gemini;
+        _deepseek = deepseek;
         _sessions = sessions;
         _appData = appData;
     }
@@ -31,7 +28,6 @@ internal sealed class Bridge
     {
         _webView.WebMessageReceived += OnWebMessageReceived;
         _webView.NavigationCompleted += OnNavigationCompleted;
-        DebugLog.Write($"Bridge.Initialize(useDevServer={useDevServer})");
 
         Uri url;
         if (useDevServer)
@@ -40,31 +36,27 @@ internal sealed class Bridge
         }
         else
         {
-            var dist = ResolveDistRoot();
-            _server = new LocalServer(dist);
+            _server = new LocalServer(ResolveDistRoot());
             url = _server.Url;
         }
 
-        DebugLog.Write($"Bridge navigating to {url}");
         _webView.Source = url;
     }
 
     private void OnNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
     {
-        DebugLog.Write($"NavigationCompleted request={e.Request} success={e.IsSuccess}");
+        if (!e.IsSuccess)
+            DebugLog.Write($"Navigation failed: request={e.Request}");
     }
 
     private static string ResolveDistRoot()
     {
-        var root = AppContext.BaseDirectory;
-        var dir = new DirectoryInfo(root);
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (var i = 0; i < 5 && dir is not null; i++, dir = dir.Parent)
         {
             var candidate = Path.Combine(dir.FullName, "dist");
             if (File.Exists(Path.Combine(candidate, "index.html")))
-            {
                 return candidate;
-            }
         }
 
         throw new InvalidOperationException("Could not locate the built frontend (dist/index.html). Run 'npm run build' first.");
@@ -75,13 +67,10 @@ internal sealed class Bridge
         Request? request;
         try
         {
-            var json = e.Body;
-            DebugLog.Write($"WebMessageReceived body={json}");
-            if (string.IsNullOrWhiteSpace(json))
-            {
+            if (string.IsNullOrWhiteSpace(e.Body))
                 return;
-            }
-            request = JsonSerializer.Deserialize<Request>(json, Json.Options);
+
+            request = JsonSerializer.Deserialize<Request>(e.Body, Json.Options);
         }
         catch (Exception ex)
         {
@@ -91,17 +80,12 @@ internal sealed class Bridge
         }
 
         if (request is null)
-        {
-            DebugLog.Write("WebMessageReceived: request is null");
             return;
-        }
 
-        DebugLog.Write($"Dispatch start cmd={request.Cmd} id={request.Id}");
         object? data;
         try
         {
             data = await DispatchAsync(request.Cmd, request.Args);
-            DebugLog.Write($"Dispatch done cmd={request.Cmd} id={request.Id}");
             Post(new Response { Kind = "response", Id = request.Id, Ok = true, Data = data });
         }
         catch (Exception ex)
@@ -126,7 +110,8 @@ internal sealed class Bridge
                         el.GetProperty("text").GetString() ?? string.Empty))
                     .ToList();
                 var prompt = args.GetProperty("prompt").GetString() ?? string.Empty;
-                return await _gemini.ChatAsync(history, prompt);
+                var result = await _gemini.ChatAsync(history, prompt);
+                return result.Text;
             }
 
             case "list_sessions":
@@ -147,6 +132,10 @@ internal sealed class Bridge
                 _sessions.Delete(args.GetProperty("id").GetString() ?? string.Empty);
                 return true;
 
+            case "chat_stream":
+                // TODO: Get ModelName, Thinking/Effort parameters and stream back the chat chunks to the frontend
+                return true;
+
             default:
                 throw new InvalidOperationException($"Unknown command: {cmd}");
         }
@@ -159,8 +148,7 @@ internal sealed class Bridge
             try
             {
                 var json = JsonSerializer.Serialize(payload, Json.Options);
-                var result = await _webView.InvokeScript($"window.justcodePostMessage({json})");
-                DebugLog.Write($"Post to JS ok, invoke result len={result?.Length ?? -1}");
+                await _webView.InvokeScript($"window.justcodePostMessage({json})");
             }
             catch (Exception ex)
             {

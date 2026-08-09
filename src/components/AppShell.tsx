@@ -17,6 +17,7 @@ export default function AppShell() {
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
     const sessionIdRef = useRef<string>(crypto.randomUUID()); // Stable per chat SessionID, resets on "New Chat"
+    const sessionCreatedAtRef = useRef<number>(0);
     const sessionTitleRef = useRef<string>("");
 
     const shellStyle = {
@@ -37,14 +38,19 @@ export default function AppShell() {
     }
 
     async function persistSession(finalMessages: ChatMessage[]) {
+        const now = Date.now();
+        if (sessionCreatedAtRef.current === 0) {
+            sessionCreatedAtRef.current = now;
+        }
+
         await invoke("save_session", {
             session: {
                 id: sessionIdRef.current,
                 title: sessionTitleRef.current,
-                createdAt: 0, // set once on first save, keep stable after
-                updatedAt: Date.now(),
+                createdAt: sessionCreatedAtRef.current,
+                updatedAt: now,
                 messages: finalMessages.map((m) => ({
-                    id: crypto.randomUUID(),
+                    id: m.id,
                     role: m.role,
                     text: m.text,
                 })),
@@ -59,6 +65,7 @@ export default function AppShell() {
             const session = await invoke<Session>("load_session", { id });
             setMessages(
                 session.messages.map((m) => ({
+                    id: m.id || crypto.randomUUID(),
                     role:
                         m.role === "user"
                             ? ("user" as const)
@@ -67,6 +74,7 @@ export default function AppShell() {
                 })),
             );
             sessionIdRef.current = id;
+            sessionCreatedAtRef.current = session.createdAt;
             sessionTitleRef.current = session.title;
             setActiveSessionId(id);
             setError(null);
@@ -92,6 +100,7 @@ export default function AppShell() {
 
     function handleNewChat() {
         sessionIdRef.current = crypto.randomUUID();
+        sessionCreatedAtRef.current = 0;
         sessionTitleRef.current = "";
         setActiveSessionId(null);
         setMessages([]);
@@ -108,10 +117,13 @@ export default function AppShell() {
             sessionTitleRef.current = prompt;
         }
 
-        const next: ChatMessage[] = [
-            ...messages,
-            { role: "user", text: prompt },
-        ];
+        const userMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "user",
+            text: prompt,
+        };
+
+        const next: ChatMessage[] = [...messages, userMessage];
         setMessages(next);
         setIsLoading(true);
         setError(null);
@@ -121,10 +133,12 @@ export default function AppShell() {
                 history,
                 prompt,
             });
-            const final: ChatMessage[] = [
-                ...next,
-                { role: "assistant", text: reply },
-            ];
+            const assistantMessage: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                text: reply,
+            };
+            const final: ChatMessage[] = [...next, assistantMessage];
             setMessages(final);
             await persistSession(final);
         } catch (err) {

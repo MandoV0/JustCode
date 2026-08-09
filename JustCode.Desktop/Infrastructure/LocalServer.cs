@@ -18,7 +18,7 @@ internal sealed class LocalServer : IDisposable
 
     public LocalServer(string root)
     {
-        _root = root;
+        _root = Path.GetFullPath(root);
 
         var probe = new TcpListener(IPAddress.Loopback, 0);
         probe.Start();
@@ -52,42 +52,72 @@ internal sealed class LocalServer : IDisposable
 
     private void Serve(HttpListenerContext ctx)
     {
+        var rawPath = ctx.Request.Url?.AbsolutePath ?? "/";
         try
         {
-            var path = ctx.Request.Url?.AbsolutePath.TrimStart('/') ?? string.Empty;
-            var full = Resolve(path);
-
+            var full = Resolve(rawPath.TrimStart('/'));
             var bytes = File.ReadAllBytes(full);
+
+            ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = MimeFor(full);
             ctx.Response.ContentLength64 = bytes.Length;
             ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
             ctx.Response.OutputStream.Close();
         }
-        catch
+        catch (FileNotFoundException ex)
         {
-            try
-            {
-                ctx.Response.StatusCode = 500;
-                ctx.Response.Close();
-            }
-            catch
-            {
-                
-            }
+            DebugLog.Write($"LocalServer 404 Not Found: {rawPath} ({ex.Message})");
+            SendErrorResponse(ctx, HttpStatusCode.NotFound, "File Not Found");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            DebugLog.Write($"LocalServer 403 Forbidden: {rawPath} ({ex.Message})");
+            SendErrorResponse(ctx, HttpStatusCode.Forbidden, "Access Denied");
+        }
+        catch (Exception ex)
+        {
+            DebugLog.Write($"LocalServer 500 Internal Error serving {rawPath}: {ex}");
+            SendErrorResponse(ctx, HttpStatusCode.InternalServerError, "Internal Server Error");
+        }
+    }
+
+    private static void SendErrorResponse(HttpListenerContext ctx, HttpStatusCode status, string message)
+    {
+        try
+        {
+            ctx.Response.StatusCode = (int)status;
+            var bytes = Encoding.UTF8.GetBytes(message);
+            ctx.Response.ContentType = "text/plain; charset=utf-8";
+            ctx.Response.ContentLength64 = bytes.Length;
+            ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+            ctx.Response.OutputStream.Close();
+        }
+        catch (Exception ex)
+        {
+            DebugLog.Write($"LocalServer failed to send error response: {ex.Message}");
         }
     }
 
     private string Resolve(string path)
     {
-        var root = Path.GetFullPath(_root);
-        var candidate = Path.GetFullPath(Path.Combine(root, path));
-        if (candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase) && File.Exists(candidate))
-        {
+        var candidate = Path.GetFullPath(Path.Combine(_root, path));
+
+        if (!candidate.StartsWith(_root, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException($"Directory traversal blocked: {path}");
+
+        if (File.Exists(candidate))
             return candidate;
+
+        // SPA fallback for HTML navigation routes
+        var ext = Path.GetExtension(path);
+        if (string.IsNullOrEmpty(ext) || ext.Equals(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            var indexPath = Path.Combine(_root, "index.html");
+            if (File.Exists(indexPath))
+                return indexPath;
         }
 
-        // SPA fallback
-        return Path.Combine(root, "index.html");
+        throw new FileNotFoundException($"Resource not found: {path}");
     }
 
     private static string MimeFor(string path)
@@ -115,9 +145,8 @@ internal sealed class LocalServer : IDisposable
         {
             _listener.Close();
         }
-        catch
+        catch (ObjectDisposedException)
         {
-            
         }
     }
 }
