@@ -1,20 +1,30 @@
 import { useState, type KeyboardEvent } from "react";
 import "./Composer.css";
 import sendIcon from "../../assets/send.svg";
+import stopIcon from "../../assets/stop.svg";
 import attachFileIcon from "../../assets/attach_file.svg";
 
 interface ComposerProps {
-    onSend: (prompt: string) => void;
-    disabled?: boolean;
+    onSend: (prompt: string, thinking: string) => void;
+    onStop: () => void;
+    isStreaming: boolean;
 }
 
-export default function Composer({ onSend, disabled }: ComposerProps) {
+const THINKING_OPTIONS = [
+    { value: "default", label: "Default" },
+    { value: "low", label: "Low" },
+    { value: "high", label: "High" },
+    { value: "max", label: "Max" },
+];
+
+export default function Composer({ onSend, onStop, isStreaming }: ComposerProps) {
     const [prompt, setPrompt] = useState("");
+    const [thinking, setThinking] = useState("default");
 
     function handleSubmit() {
         const trimmed = prompt.trim();
-        if (!trimmed || disabled) return;
-        onSend(trimmed);
+        if (!trimmed || isStreaming) return;
+        onSend(trimmed, thinking);
         setPrompt("");
     }
 
@@ -37,20 +47,44 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
             />
 
             <div className="composer-actions">
-                <button className="composer-icon-btn" title="Attach file">
-                    <img src={attachFileIcon} alt="Attach file" />
-                </button>
+                <div className="composer-tools">
+                    <button className="composer-icon-btn" title="Attach file">
+                        <img src={attachFileIcon} alt="Attach file" />
+                    </button>
+                    <select
+                        className="composer-thinking"
+                        value={thinking}
+                        onChange={(e) => setThinking(e.currentTarget.value)}
+                        title="Thinking effort"
+                    >
+                        {THINKING_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
 
                 <div className="composer-spacer" />
 
-                <button
-                    className="composer-send-btn"
-                    onClick={handleSubmit}
-                    disabled={!prompt.trim() || disabled}
-                    title="Send"
-                >
-                    <img src={sendIcon} alt="Send" />
-                </button>
+                {isStreaming ? (
+                    <button
+                        className="composer-send-btn composer-stop-btn"
+                        onClick={onStop}
+                        title="Stop"
+                    >
+                        <img src={stopIcon} alt="Stop" />
+                    </button>
+                ) : (
+                    <button
+                        className="composer-send-btn"
+                        onClick={handleSubmit}
+                        disabled={!prompt.trim()}
+                        title="Send"
+                    >
+                        <img src={sendIcon} alt="Send" />
+                    </button>
+                )}
             </div>
         </div>
     );

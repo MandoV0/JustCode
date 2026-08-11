@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { invoke, type Session, type SessionSummary } from "../bridge";
+import { invoke, invokeStream, type Session, type SessionSummary, type ToolStatus } from "../bridge";
 import "../styles/tokens.css";
 import "./AppShell.css";
 import Composer from "./Composer/Composer";
-import ChatView, { type ChatMessage } from "./ChatView/ChatView";
+import ChatView, { type ChatMessage, type ToolRun } from "./ChatView/ChatView";
 import Sidebar from "./Sidebar/SideBar";
 import arrowOpenIcon from "../assets/arrowOpen.svg";
 
@@ -19,6 +19,7 @@ export default function AppShell() {
     const sessionIdRef = useRef<string>(crypto.randomUUID()); // Stable per chat SessionID, resets on "New Chat"
     const sessionCreatedAtRef = useRef<number>(0);
     const sessionTitleRef = useRef<string>("");
+    const toolRunsRef = useRef<ToolRun[]>([]);
 
     const shellStyle = {
         gridTemplateColumns: sidebarOpen ? "var(--sidebar-width) 1fr" : "1fr",
@@ -107,7 +108,7 @@ export default function AppShell() {
         setError(null);
     }
 
-    async function handleSend(prompt: string) {
+    async function handleSend(prompt: string, thinking: string) {
         const history = messages.map((m) => ({
             role: m.role,
             text: m.text,
@@ -124,21 +125,49 @@ export default function AppShell() {
         };
 
         const next: ChatMessage[] = [...messages, userMessage];
-        setMessages(next);
+        const assistantId = crypto.randomUUID();
+        const assistantMessage: ChatMessage = {
+            id: assistantId,
+            role: "assistant",
+            text: "",
+        };
+
+        setMessages([...next, assistantMessage]);
+        toolRunsRef.current = [];
         setIsLoading(true);
         setError(null);
 
         try {
-            const reply = await invoke<string>("chat_with_gemini", {
-                history,
-                prompt,
+            let reply = "";
+            const result = await invokeStream<"done" | "cancelled">("chat_stream", { history, prompt, thinking }, {
+                onChunk: (chunk) => {
+                    reply += String(chunk);
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === assistantId ? { ...m, text: reply } : m,
+                        ),
+                    );
+                },
+                onToolStatus: (status) => {
+                    toolRunsRef.current = applyToolStatus(toolRunsRef.current, status);
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === assistantId
+                                ? { ...m, toolRuns: toolRunsRef.current }
+                                : m,
+                        ),
+                    );
+                },
             });
-            const assistantMessage: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                text: reply,
-            };
-            const final: ChatMessage[] = [...next, assistantMessage];
+            const final: ChatMessage[] = [
+                ...next,
+                {
+                    ...assistantMessage,
+                    text: reply,
+                    interrupted: result === "cancelled",
+                    toolRuns: toolRunsRef.current,
+                },
+            ];
             setMessages(final);
             await persistSession(final);
         } catch (err) {
@@ -147,6 +176,34 @@ export default function AppShell() {
         } finally {
             setIsLoading(false);
         }
+    }
+
+    async function handleStop() {
+        try {
+            await invoke("cancel_stream");
+        } catch (err) {
+            console.error("cancel_stream failed", err);
+        }
+    }
+
+    function applyToolStatus(prev: ToolRun[], status: ToolStatus): ToolRun[] {
+        if (status.state === "started") {
+            return [...prev, { ...status, id: toolRunsRef.current.length }];
+        }
+
+        const index = findRunningRun(prev, status.name);
+        if (index === -1) return prev;
+
+        const next = [...prev];
+        next[index] = { ...next[index], state: "done", output: status.output };
+        return next;
+    }
+
+    function findRunningRun(runs: ToolRun[], name: string): number {
+        for (let i = runs.length - 1; i >= 0; i--) {
+            if (runs[i].name === name && runs[i].state === "started") return i;
+        }
+        return -1;
     }
 
     return (
@@ -178,7 +235,11 @@ export default function AppShell() {
                     isLoading={isLoading}
                     error={error}
                 />
-                <Composer onSend={handleSend} disabled={isLoading} />
+                <Composer
+                    onSend={handleSend}
+                    onStop={handleStop}
+                    isStreaming={isLoading}
+                />
             </main>
         </div>
     );

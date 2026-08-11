@@ -8,18 +8,19 @@ namespace JustCode.Bridge;
 
 internal sealed class Bridge
 {
+    private const int MaxToolOutputChars = 4000;
+
     private readonly NativeWebView _webView;
-    private readonly GeminiService _gemini;
-    private readonly OpenAIService _deepseek;
+    private readonly LlmProviderService _llmProvider;
     private readonly SessionService _sessions;
     private readonly AppDataService _appData;
     private LocalServer? _server;
+    private CancellationTokenSource? _activeStreamCts;
 
-    public Bridge(NativeWebView webView, GeminiService gemini, OpenAIService deepseek, SessionService sessions, AppDataService appData)
+    public Bridge(NativeWebView webView, LlmProviderService llmProvider, SessionService sessions, AppDataService appData)
     {
         _webView = webView;
-        _gemini = gemini;
-        _deepseek = deepseek;
+        _llmProvider = llmProvider;
         _sessions = sessions;
         _appData = appData;
     }
@@ -85,7 +86,7 @@ internal sealed class Bridge
         object? data;
         try
         {
-            data = await DispatchAsync(request.Cmd, request.Args);
+            data = await DispatchAsync(request.Id, request.Cmd, request.Args);
             Post(new Response { Kind = "response", Id = request.Id, Ok = true, Data = data });
         }
         catch (Exception ex)
@@ -95,24 +96,12 @@ internal sealed class Bridge
         }
     }
 
-    private async Task<object?> DispatchAsync(string cmd, JsonElement args)
+    private async Task<object?> DispatchAsync(int id, string cmd, JsonElement args)
     {
         switch (cmd)
         {
             case "get_app_data_dir":
                 return _appData.Root;
-
-            case "chat_with_gemini":
-            {
-                var history = args.GetProperty("history").EnumerateArray()
-                    .Select(el => new ChatTurn(
-                        el.GetProperty("role").GetString() ?? "user",
-                        el.GetProperty("text").GetString() ?? string.Empty))
-                    .ToList();
-                var prompt = args.GetProperty("prompt").GetString() ?? string.Empty;
-                var result = await _gemini.ChatAsync(history, prompt);
-                return result.Text;
-            }
 
             case "list_sessions":
                 return _sessions.List();
@@ -133,12 +122,63 @@ internal sealed class Bridge
                 return true;
 
             case "chat_stream":
-                // TODO: Get ModelName, Thinking/Effort parameters and stream back the chat chunks to the frontend
+            {
+                var history = args.GetProperty("history").EnumerateArray()
+                    .Select(el => new ChatTurn(
+                        el.GetProperty("role").GetString() ?? "user",
+                        el.GetProperty("text").GetString() ?? string.Empty))
+                    .ToList();
+                var prompt = args.GetProperty("prompt").GetString() ?? string.Empty;
+                var thinking = args.GetProperty("thinking").GetString() ?? "default";
+
+                _llmProvider.ThinkingEffort = thinking;
+
+                using var cts = new CancellationTokenSource();
+                _activeStreamCts = cts;
+                try
+                {
+                    await foreach (var chunk in _llmProvider.ChatStreamAsync(
+                        history,
+                        prompt,
+                        onReasoningDelta: null,
+                        onToolStatus: s => Post(new { kind = "tool_status", id, data = CapToolOutput(s) }),
+                        cts.Token))
+                    {
+                        Post(new { kind = "chunk", id, data = chunk });
+                    }
+
+                    return "done";
+                }
+                catch (OperationCanceledException)
+                {
+                    DebugLog.Write($"Stream cancelled by user (id={id})");
+                    return "cancelled";
+                }
+                finally
+                {
+                    _activeStreamCts = null;
+                }
+            }
+
+            case "cancel_stream":
+                _activeStreamCts?.Cancel();
                 return true;
 
             default:
                 throw new InvalidOperationException($"Unknown command: {cmd}");
         }
+    }
+
+    private static ToolStatus CapToolOutput(ToolStatus status)
+    {
+        if (status.Output is null || status.Output.Length <= MaxToolOutputChars)
+            return status;
+
+        return new ToolStatus(
+            status.Name,
+            status.Arguments,
+            status.State,
+            status.Output[..MaxToolOutputChars] + "\n\n...(output truncated)");
     }
 
     private void Post(object payload)

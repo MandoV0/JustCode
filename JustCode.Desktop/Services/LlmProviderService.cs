@@ -5,10 +5,14 @@ namespace JustCode.Services;
 
 public sealed record ChatTurn(string Role, string Text, string? Reasoning = null);
 
+public sealed record ToolStatus(string Name, string Arguments, string State, string? Output = null);
+
 public abstract class LlmProviderService(List<ITool> tools)
 {
     protected static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(120) };
     protected readonly Dictionary<string, ITool> Tools = tools.ToDictionary(t => t.Name);
+
+    public string? ThinkingEffort { get; set; }
 
     public abstract IAsyncEnumerable<string> ChatStreamAsync(
         List<ChatTurn>? history,
@@ -19,6 +23,14 @@ public abstract class LlmProviderService(List<ITool> tools)
         List<ChatTurn>? history,
         string prompt,
         Action<string>? onReasoningDelta,
+        CancellationToken cancellationToken = default) =>
+        ChatStreamAsync(history, prompt, onReasoningDelta, onToolStatus: null, cancellationToken);
+
+    public virtual IAsyncEnumerable<string> ChatStreamAsync(
+        List<ChatTurn>? history,
+        string prompt,
+        Action<string>? onReasoningDelta,
+        Action<ToolStatus>? onToolStatus,
         CancellationToken cancellationToken = default) =>
         ChatStreamAsync(history, prompt, cancellationToken);
 

@@ -2,15 +2,30 @@ type Pending = {
     resolve: (value: unknown) => void;
     reject: (reason: Error) => void;
     timer: number;
+    onChunk?: (data: unknown) => void;
+    onToolStatus?: (status: ToolStatus) => void;
 };
 
 type BridgeMessage = {
-    kind: "response";
+    kind: "response" | "chunk" | "tool_status";
     id: number;
-    ok: boolean;
+    ok?: boolean;
     data?: unknown;
     error?: string;
 };
+
+export type ToolStatus = {
+    name: string;
+    arguments?: string;
+    state: "started" | "done";
+    output?: string;
+};
+
+export interface InvokeOptions {
+    timeoutMs?: number;
+    onChunk?: (data: unknown) => void;
+    onToolStatus?: (status: ToolStatus) => void;
+}
 
 export interface SessionMessage {
     id: string;
@@ -63,10 +78,11 @@ function postToNative(message: object) {
 export async function invoke<T = unknown>(
     cmd: string,
     args?: Record<string, unknown>,
-    timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
+    options?: InvokeOptions,
 ): Promise<T> {
     await waitForNativeBridge;
     const id = nextId++;
+    const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, onChunk, onToolStatus } = options ?? {};
 
     return new Promise<T>((resolve, reject) => {
         const timer = window.setTimeout(() => {
@@ -86,6 +102,8 @@ export async function invoke<T = unknown>(
                 reject(reason);
             },
             timer,
+            onChunk,
+            onToolStatus,
         });
 
         try {
@@ -98,10 +116,26 @@ export async function invoke<T = unknown>(
     });
 }
 
+export async function invokeStream<T = unknown>(
+    cmd: string,
+    args: Record<string, unknown> | undefined,
+    options?: InvokeOptions,
+): Promise<T> {
+    return invoke<T>(cmd, args, options);
+}
+
 (window as unknown as Record<string, unknown>).justcodePostMessage = (
     message: BridgeMessage | string,
 ) => {
     const parsed = typeof message === "string" ? (JSON.parse(message) as BridgeMessage) : message;
+    if (parsed?.kind === "chunk") {
+        pending.get(parsed.id)?.onChunk?.(parsed.data);
+        return;
+    }
+    if (parsed?.kind === "tool_status") {
+        pending.get(parsed.id)?.onToolStatus?.(parsed.data as ToolStatus);
+        return;
+    }
     if (parsed?.kind !== "response") {
         return;
     }

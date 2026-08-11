@@ -51,6 +51,35 @@
   gap: var(--space-2);
 }
 
+.composer-tools {
+  display: flex;
+  align-items: center;
+
+  gap: var(--space-1);
+}
+
+.composer-thinking {
+  height: 28px;
+
+  padding: 0 8px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+
+  background: var(--bg-3);
+  color: var(--text-1);
+
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+
+  cursor: pointer;
+}
+
+.composer-thinking:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .composer-icon-btn,
 .composer-send-btn {
   width: 36px;
@@ -88,6 +117,15 @@
   background: var(--bg-3);
   cursor: default;
   opacity: 0.6;
+}
+
+.composer-stop-btn {
+  background: var(--red);
+}
+
+.composer-stop-btn:hover:not(:disabled) {
+  background: var(--red);
+  opacity: 0.9;
 }
 
 .composer-icon-btn img,

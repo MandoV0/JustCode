@@ -1,12 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { type ToolStatus } from "../../bridge";
 import "./ChatView.css";
 
 export interface ChatMessage {
     id: string;
     role: "user" | "assistant";
     text: string;
+    interrupted?: boolean;
+    toolRuns?: ToolRun[];
+}
+
+export interface ToolRun extends ToolStatus {
+    id: number;
 }
 
 interface ChatViewProps {
@@ -52,6 +59,16 @@ export default function ChatView({ messages, isLoading, error }: ChatViewProps) 
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                 {message.text}
                             </ReactMarkdown>
+                            {message.toolRuns && message.toolRuns.length > 0 && (
+                                <div className="message-tool-runs">
+                                    {message.toolRuns.map((run) => (
+                                        <ToolRunCard key={run.id} run={run} />
+                                    ))}
+                                </div>
+                            )}
+                            {message.interrupted && (
+                                <div className="message-interrupted">Stopped</div>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -68,5 +85,40 @@ export default function ChatView({ messages, isLoading, error }: ChatViewProps) 
             </div>
         </div>
     );
+}
+
+function ToolRunCard({ run }: { run: ToolRun }) {
+    const [expanded, setExpanded] = useState(true);
+
+    return (
+        <div className={`tool-run ${run.state} ${expanded ? "open" : ""}`}>
+            <button
+                className="tool-run-header"
+                onClick={() => setExpanded((value) => !value)}
+                title={expanded ? "Collapse" : "Expand"}
+            >
+                <span className={`tool-run-status ${run.state}`} />
+                <span className="tool-run-name">{run.name}</span>
+                <span className="tool-run-chevron">▸</span>
+            </button>
+            {expanded && (
+                <>
+                    <pre className="tool-run-args">{formatArgs(run.arguments ?? "")}</pre>
+                    {run.output && <pre className="tool-run-output">{run.output}</pre>}
+                </>
+            )}
+        </div>
+    );
+}
+
+function formatArgs(args: string): string {
+    try {
+        const parsed = JSON.parse(args) as Record<string, unknown>;
+        const command = parsed?.command;
+        if (typeof command === "string") return command;
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return args;
+    }
 }
 

@@ -11,8 +11,7 @@ public sealed record OpenAiConfig(
     string BaseUrl = "https://api.openai.com/v1/chat/completions",
     string ApiKey = "",
     string Model = "gpt-4o",
-    bool StrictMode = false,
-    bool EnableThinking = false
+    bool StrictMode = false
 )
 {
     public bool IsDeepSeek =>
@@ -35,18 +34,26 @@ public sealed record OpenAiConfig(
 
 public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmProviderService(tools)
 {
-    private const int MaxToolRounds = 10;
+    private const int MaxToolRounds = 32;
 
     public override IAsyncEnumerable<string> ChatStreamAsync(
         List<ChatTurn>? history,
         string prompt,
         CancellationToken cancellationToken = default) =>
-        ChatStreamAsync(history, prompt, onReasoningDelta: null, cancellationToken);
+        ChatStreamAsync(history, prompt, onReasoningDelta: null, onToolStatus: null, cancellationToken);
+
+    public override IAsyncEnumerable<string> ChatStreamAsync(
+        List<ChatTurn>? history,
+        string prompt,
+        Action<string>? onReasoningDelta,
+        CancellationToken cancellationToken = default) =>
+        ChatStreamAsync(history, prompt, onReasoningDelta, onToolStatus: null, cancellationToken);
 
     public override async IAsyncEnumerable<string> ChatStreamAsync(
         List<ChatTurn>? history,
         string prompt,
         Action<string>? onReasoningDelta,
+        Action<ToolStatus>? onToolStatus,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var messages = new List<object>();
@@ -122,9 +129,11 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
                 ["tools"] = toolDeclarations.Length > 0 ? toolDeclarations : null
             };
 
-            if (config.EnableThinking)
+            if (config.IsDeepSeek)
             {
-                requestBody["enable_thinking"] = true;
+                requestBody["thinking"] = new { type = "enabled" };
+                if (ThinkingEffort is { Length: > 0 } and not "default")
+                    requestBody["reasoning_effort"] = ThinkingEffort;
             }
 
             using var req = new HttpRequestMessage(HttpMethod.Post, config.NormalizedUrl);
@@ -215,7 +224,9 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
             // Execute tools in parallel for speed
             var toolTasks = finalTools.Select(async call =>
             {
+                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "started"));
                 var result = await ExecuteToolAsync(call.function.name, call.function.arguments, cancellationToken);
+                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "done", result));
                 return new
                 {
                     role = "tool",

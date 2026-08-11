@@ -4,7 +4,7 @@ namespace JustCode.Tools;
 
 public class ReadFileTool : ITool
 {
-    public string Name => "read_file";
+    public string Name => "read";
     public string Description => "Reads the content of a file relative to the workspace.";
 
     public object ParameterSchema => new
@@ -23,18 +23,11 @@ public class ReadFileTool : ITool
 
     public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
-        var rel = arguments.TryGetProperty("path", out var p) ? p.GetString() : null;
-        if (string.IsNullOrWhiteSpace(rel))
-            return ToolResult.Error("'path' argument is required.");
-
-        var workspace = Path.GetFullPath(Environment.CurrentDirectory);
-        var full = Path.GetFullPath(Path.Combine(workspace, rel));
-
-        if (!full.StartsWith(workspace + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            return ToolResult.Error("Access outside of workspace is forbidden.");
-
-        if (!File.Exists(full))
-            return ToolResult.Error($"File not found: {rel}");
+        var path = arguments.GetProperty("path").GetString()!;
+        if (!ToolHelpers.TryResolvePath(path, out var full, out var error, checkExists: true))
+        {
+            return error!;
+        }
 
         try
         {
