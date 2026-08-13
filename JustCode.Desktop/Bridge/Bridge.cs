@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
@@ -10,8 +11,6 @@ namespace JustCode.Bridge;
 
 internal sealed class Bridge
 {
-    private const int MaxToolOutputChars = 4000;
-
     private readonly NativeWebView _webView;
     private readonly List<ITool> _tools;
     private readonly SessionService _sessions;
@@ -19,8 +18,8 @@ internal sealed class Bridge
     private readonly ApiConfigService _apiConfigs;
     private readonly ProjectService _projects;
     private readonly PermissionService _permissions;
+    private readonly AgentProcessor _agents;
     private LocalServer? _server;
-    private CancellationTokenSource? _activeStreamCts;
 
     public Bridge(NativeWebView webView, List<ITool> tools, SessionService sessions, AppDataService appData, ApiConfigService apiConfigs, ProjectService projects)
     {
@@ -31,6 +30,7 @@ internal sealed class Bridge
         _apiConfigs = apiConfigs;
         _projects = projects;
         _permissions = new PermissionService(Post);
+        _agents = new AgentProcessor(apiConfigs, projects, tools, _permissions);
     }
 
     public void Initialize(bool useDevServer)
@@ -188,8 +188,17 @@ internal sealed class Bridge
                 _sessions.Delete(args.GetProperty("id").GetString() ?? string.Empty);
                 return true;
 
+            case "rename_session":
+            {
+                var sessionId = args.GetProperty("id").GetString() ?? string.Empty;
+                var title = args.GetProperty("title").GetString() ?? string.Empty;
+                _sessions.Rename(sessionId, title);
+                return true;
+            }
+
             case "chat_stream":
             {
+                var agentId = args.GetProperty("agentId").GetString() ?? string.Empty;
                 var history = ParseHistory(args);
                 var prompt = args.GetProperty("prompt").GetString() ?? string.Empty;
                 var thinking = args.GetProperty("thinking").GetString() ?? "default";
@@ -200,41 +209,27 @@ internal sealed class Bridge
                     ? projectProp.GetString()
                     : null;
 
-                if (!string.IsNullOrWhiteSpace(projectId)) _projects.SetActive(projectId);
+                if (string.IsNullOrWhiteSpace(agentId))
+                    throw new InvalidOperationException("chat_stream requires an agentId.");
 
-                var provider = ResolveProvider(configId);
-                provider.ThinkingEffort = thinking;
-
-                using var cts = new CancellationTokenSource();
-                _activeStreamCts = cts;
-                try
-                {
-                    await foreach (var chunk in provider.ChatStreamAsync(
-                        history,
-                        prompt,
-                        onReasoningDelta: d => Post(new { kind = "reasoning_chunk", id, data = d }),
-                        onToolStatus: s => Post(new { kind = "tool_status", id, data = CapToolOutput(s) }),
-                        cts.Token))
-                    {
-                        Post(new { kind = "chunk", id, data = chunk });
-                    }
-
-                    return "done";
-                }
-                catch (OperationCanceledException)
-                {
-                    DebugLog.Write($"Stream cancelled by user (id={id})");
-                    return "cancelled";
-                }
-                finally
-                {
-                    _activeStreamCts = null;
-                }
+                return await _agents.RunAsync(
+                    agentId,
+                    history,
+                    prompt,
+                    thinking,
+                    configId,
+                    projectId,
+                    onChunk: c => Post(new { kind = "chunk", id, data = c }),
+                    onToolStatus: s => Post(new { kind = "tool_status", id, data = s }),
+                    onReasoningDelta: d => Post(new { kind = "reasoning_chunk", id, data = d }));
             }
 
             case "cancel_stream":
-                _activeStreamCts?.Cancel();
+            {
+                var agentId = args.GetProperty("agentId").GetString() ?? string.Empty;
+                _agents.Cancel(agentId);
                 return true;
+            }
 
             case "set_yolo_mode":
             {
@@ -282,55 +277,36 @@ internal sealed class Bridge
             return [];
 
         return history.EnumerateArray()
-            .Select(el => new ChatTurn(
-                el.TryGetProperty("role", out var roleProp) ? roleProp.GetString() ?? "user" : "user",
-                el.TryGetProperty("text", out var textProp) ? textProp.GetString() ?? string.Empty : string.Empty,
-                Blocks: el.TryGetProperty("blocks", out var blocksProp) && blocksProp.ValueKind == JsonValueKind.Array
-                    ? blocksProp.EnumerateArray().ToList()
-                    : null))
+            .Select(BuildTurn)
             .ToList();
     }
 
-    private LlmProviderService ResolveProvider(string? configId)
+    private static ChatTurn BuildTurn(JsonElement el)
     {
-        var config = _apiConfigs.Get(configId);
-        if (config is null)
-            throw new InvalidOperationException(
-                "No API configuration selected. Open Settings and add an API config first.");
+        var role = el.TryGetProperty("role", out var roleProp) ? roleProp.GetString() ?? "user" : "user";
+        var text = el.TryGetProperty("text", out var textProp) ? textProp.GetString() ?? string.Empty : string.Empty;
+        var blocks = el.TryGetProperty("blocks", out var blocksProp) && blocksProp.ValueKind == JsonValueKind.Array
+            ? blocksProp.EnumerateArray().ToList()
+            : null;
 
-        return new OpenAIService(new OpenAiConfig
+        string? reasoning = null;
+        if (role == "assistant" && blocks is not null)
         {
-            BaseUrl = config.BaseUrl,
-            ApiKey = config.ApiKey,
-            Model = config.Model,
-            StrictMode = config.StrictMode,
-            EnableThinking = config.EnableThinking,
-            MaxContextTokens = config.MaxContextTokens,
-            SystemPrompt = BuildSystemPrompt()
-        }, _tools, _permissions);
-    }
+            var sb = new StringBuilder();
+            foreach (var block in blocks)
+            {
+                if (block.ValueKind == JsonValueKind.Object
+                    && block.TryGetProperty("type", out var typeEl)
+                    && typeEl.GetString() == "thinking"
+                    && block.TryGetProperty("text", out var thinkingText))
+                {
+                    sb.Append(thinkingText.GetString());
+                }
+            }
+            if (sb.Length > 0) reasoning = sb.ToString();
+        }
 
-    private string BuildSystemPrompt()
-    {
-        var projectName = _projects.ActiveProject?.Name;
-        if (string.IsNullOrWhiteSpace(projectName))
-            projectName = "Unnamed project";
-
-        return $"Project: {projectName}\nWorkspace root: {_projects.Root}\n" +
-               "You are JustCode, an AI coding assistant. All file and command operations are scoped to the workspace root. " +
-               "Prefer the provided tools over guessing file contents.";
-    }
-
-    private static ToolStatus CapToolOutput(ToolStatus status)
-    {
-        if (status.Output is null || status.Output.Length <= MaxToolOutputChars)
-            return status;
-
-        return new ToolStatus(
-            status.Name,
-            status.Arguments,
-            status.State,
-            OutputTruncator.Tail(status.Output, MaxToolOutputChars));
+        return new ChatTurn(role, text, reasoning, blocks);
     }
 
     private void Post(object payload)

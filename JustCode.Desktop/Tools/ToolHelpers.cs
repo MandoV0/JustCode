@@ -37,6 +37,22 @@ public static class ToolHelpers
         return new FileLockHandle(semaphore);
     }
 
+    /// <summary>
+    /// Runs a file IO operation, converting the standard filesystem exceptions
+    /// into a user-facing error result with a shared message shape.
+    /// </summary>
+    public static async Task<ToolResult> GuardAsync(string operation, Func<Task<ToolResult>> body)
+    {
+        try
+        {
+            return await body();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return ToolResult.Error($"Failed to {operation}: {ex.Message}");
+        }
+    }
+
     private sealed class FileLockHandle : IDisposable
     {
         private readonly SemaphoreSlim _semaphore;

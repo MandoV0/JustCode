@@ -4,19 +4,17 @@ using JustCode.Services;
 
 namespace JustCode.Tools;
 
-public class SearchTool : ITool
+public class SearchTool : WorkspaceTool
 {
-    private readonly ProjectService _project;
-
-    public SearchTool(ProjectService project) => _project = project;
+    public SearchTool(ProjectService project) : base(project) { }
 
     private const long MaxSearchFileBytes = 10L * 1024 * 1024;
     private const int BinaryProbeBytes = 1024;
 
-    public string Name => "search";
-    public string Description => "Searches file contents for a text pattern or regular expression, returning matching files and lines (grep-style).";
+    public override string Name => "search";
+    public override string Description => "Searches file contents for a text pattern or regular expression, returning matching files and lines (grep-style).";
 
-    public object ParameterSchema => new
+    public override object ParameterSchema => new
     {
         type = "object",
         properties = new
@@ -32,7 +30,7 @@ public class SearchTool : ITool
         required = new[] { "pattern" }
     };
 
-    public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
         var pattern = arguments.GetProperty("pattern").GetString()!;
         if (string.IsNullOrWhiteSpace(pattern))
@@ -64,9 +62,9 @@ public class SearchTool : ITool
             return ToolResult.Error("max_results must be greater than 0.");
         }
 
-        if (!_project.TryResolvePath(searchPath, out var root, out var error))
+        if (ResolvePath(searchPath, out var root) is { } error)
         {
-            return ToolResult.Error(error ?? "Path resolution failed.");
+            return error;
         }
 
         if (!Directory.Exists(root))
@@ -93,90 +91,89 @@ public class SearchTool : ITool
         var filesSearched = 0;
         var truncated = false;
 
-        try
+        return await ToolHelpers.GuardAsync("search", async () =>
         {
-            foreach (var file in Directory.EnumerateFiles(root, filePattern, SearchOption.AllDirectories))
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                filesSearched++;
-
-                try
+                foreach (var file in Directory.EnumerateFiles(root, filePattern, SearchOption.AllDirectories))
                 {
-                    if (new FileInfo(file).Length > MaxSearchFileBytes)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    filesSearched++;
+
+                    try
                     {
-                        continue; // Skip files too large to read safely.
+                        if (new FileInfo(file).Length > MaxSearchFileBytes)
+                        {
+                            continue; // Skip files too large to read safely.
+                        }
+
+                        if (await IsBinaryAsync(file, cancellationToken))
+                        {
+                            continue; // Skip binary files.
+                        }
                     }
-
-                    if (await IsBinaryAsync(file, cancellationToken))
-                    {
-                        continue; // Skip binary files.
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    continue;
-                }
-
-                string content;
-                try
-                {
-                    content = await File.ReadAllTextAsync(file, cancellationToken);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
-                {
-                    continue; // Skip files we cannot read.
-                }
-
-                foreach (var (line, number) in EnumerateLines(content))
-                {
-                    var isMatch = regex is not null
-                        ? regex.IsMatch(line)
-                        : line.Contains(pattern, comparison);
-
-                    if (!isMatch)
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         continue;
                     }
 
-                    var relative = Path.GetRelativePath(_project.Root, file);
-                    results.Add(showLines
-                        ? $"{relative}:{number}: {Truncate(line)}"
-                        : $"{relative}:{number}");
-
-                    if (results.Count >= maxResults)
+                    string content;
+                    try
                     {
-                        truncated = true;
+                        content = await File.ReadAllTextAsync(file, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+                    {
+                        continue; // Skip files we cannot read.
+                    }
+
+                    foreach (var (line, number) in EnumerateLines(content))
+                    {
+                        var isMatch = regex is not null
+                            ? regex.IsMatch(line)
+                            : line.Contains(pattern, comparison);
+
+                        if (!isMatch)
+                        {
+                            continue;
+                        }
+
+                        var relative = Path.GetRelativePath(Project.Root, file);
+                        results.Add(showLines
+                            ? $"{relative}:{number}: {Truncate(line)}"
+                            : $"{relative}:{number}");
+
+                        if (results.Count >= maxResults)
+                        {
+                            truncated = true;
+                            break;
+                        }
+                    }
+
+                    if (truncated)
+                    {
                         break;
                     }
                 }
-
-                if (truncated)
-                {
-                    break;
-                }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            return ToolResult.Error("Search was cancelled.");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            return ToolResult.Error($"Failed to search: {ex.Message}");
-        }
+            catch (OperationCanceledException)
+            {
+                return ToolResult.Error("Search was cancelled.");
+            }
 
-        var output = results.Count == 0
-            ? "No matches found."
-            : string.Join(Environment.NewLine, results);
+            var output = results.Count == 0
+                ? "No matches found."
+                : string.Join(Environment.NewLine, results);
 
-        if (truncated)
-        {
-            output += $"{Environment.NewLine}... truncated at {maxResults} result(s).";
-        }
+            if (truncated)
+            {
+                output += $"{Environment.NewLine}... truncated at {maxResults} result(s).";
+            }
 
-        output += $"{Environment.NewLine}[{results.Count} match(es) across {filesSearched} file(s)]";
+            output += $"{Environment.NewLine}[{results.Count} match(es) across {filesSearched} file(s)]";
 
-        return ToolResult.Ok(output);
+            return ToolResult.Ok(output);
+        });
     }
 
     private static IEnumerable<(string Text, int Number)> EnumerateLines(string content)

@@ -8,7 +8,7 @@ namespace JustCode.Services;
 /// macOS    ~/Library/Application Support/JustCode
 /// Linux    $XDG_DATA_HOME or ~/.local/share/JustCode
 /// </summary>
-internal sealed class AppDataService
+public sealed class AppDataService
 {
     public string Root { get; }
 

@@ -5,9 +5,10 @@ interface ApprovalModalProps {
     request: ApprovalRequest;
     onApprove: () => void;
     onDeny: () => void;
+    sourceName?: string;
 }
 
-export default function ApprovalModal({ request, onApprove, onDeny }: ApprovalModalProps) {
+export default function ApprovalModal({ request, onApprove, onDeny, sourceName }: ApprovalModalProps) {
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
             if (e.key === "Escape") onDeny();
@@ -27,7 +28,10 @@ export default function ApprovalModal({ request, onApprove, onDeny }: ApprovalMo
         <div className="approval-backdrop" onClick={onDeny}>
             <div className="approval-modal" onClick={(e) => e.stopPropagation()}>
                 <h2 className="approval-title">Approve tool call</h2>
-                <div className="approval-tool">{request.name}</div>
+                <div className="approval-tool">
+                    {request.name}
+                    {sourceName && <span className="approval-source"> · {sourceName}</span>}
+                </div>
                 <pre className="approval-args">{argsText}</pre>
                 <p className="approval-hint">Waiting for your approval — YOLO mode off.</p>
                 <div className="approval-actions">

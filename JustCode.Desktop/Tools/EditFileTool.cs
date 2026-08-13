@@ -3,18 +3,16 @@ using JustCode.Services;
 
 namespace JustCode.Tools;
 
-public class EditFileTool : ITool
+public class EditFileTool : WorkspaceTool
 {
-    private readonly ProjectService _project;
+    public EditFileTool(ProjectService project) : base(project) { }
 
-    public EditFileTool(ProjectService project) => _project = project;
+    public override string Name => "edit";
+    public override string Description => "Makes a precise text replacement in a file. old_string must match exactly (and uniquely, unless replace_all is set).";
 
-    public string Name => "edit";
-    public string Description => "Makes a precise text replacement in a file. old_string must match exactly (and uniquely, unless replace_all is set).";
+    public override bool RequiresApproval => true;
 
-    public bool RequiresApproval => true;
-
-    public object ParameterSchema => new
+    public override object ParameterSchema => new
     {
         type = "object",
         properties = new
@@ -27,70 +25,60 @@ public class EditFileTool : ITool
         required = new[] { "path", "old_string", "new_string" }
     };
 
-    public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
-        var path        =   arguments.GetProperty("path").GetString()!;
-        var oldString   =   arguments.GetProperty("old_string").GetString()!;
-        var newString   =   arguments.GetProperty("new_string").GetString()!;
-        var replaceAll  =   arguments.TryGetProperty("replace_all", out var raEl) && raEl.GetBoolean();
+        var path = arguments.GetProperty("path").GetString()!;
+        var oldString = arguments.GetProperty("old_string").GetString()!;
+        var newString = arguments.GetProperty("new_string").GetString()!;
+        var replaceAll = arguments.TryGetProperty("replace_all", out var raEl) && raEl.GetBoolean();
 
         if (oldString.Length == 0)
         {
             return ToolResult.Error("old_string must not be empty. Use the write tool to create new files.");
         }
 
-        if (!_project.TryResolvePath(path, out var full, out var error, checkExists: true))
+        if (ResolvePath(path, out var full, checkExists: true) is { } error)
         {
-            return ToolResult.Error(error ?? "Path resolution failed.");
+            return error;
         }
 
-        using var fileLock = await ToolHelpers.LockFileAsync(full, cancellationToken);
-
-        TextFileContent file;
-        try
+        return await ToolHelpers.GuardAsync("edit file", async () =>
         {
-            file = await TextFileHelper.ReadAsync(full, cancellationToken);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return ToolResult.Error($"Failed to read file: {ex.Message}");
-        }
+            using var fileLock = await ToolHelpers.LockFileAsync(full, cancellationToken);
 
-        var lineEnding = file.LineEnding;
-        var normalizedOriginal = file.Text.Replace("\r\n", "\n");
-        var normalizedOld = oldString.Replace("\r\n", "\n");
-        var normalizedNew = newString.Replace("\r\n", "\n");
+            var file = await TextFileHelper.ReadAsync(full, cancellationToken);
 
-        var occurrences = CountOccurrences(normalizedOriginal, normalizedOld);
+            var lineEnding = file.LineEnding;
+            var normalizedOriginal = file.Text.Replace("\r\n", "\n");
+            var normalizedOld = oldString.Replace("\r\n", "\n");
+            var normalizedNew = newString.Replace("\r\n", "\n");
 
-        if (occurrences == 0)
-        {
-            return ToolResult.Error("old_string was not found in the file. Ensure it matches the file's current content exactly, including whitespace.");
-        }
+            var occurrences = CountOccurrences(normalizedOriginal, normalizedOld);
 
-        if (occurrences > 1 && !replaceAll)
-        {
-            return ToolResult.Error($"old_string matches {occurrences} locations in the file. Provide more surrounding context to make it unique, or set replace_all to true.");
-        }
+            if (occurrences == 0)
+            {
+                return ToolResult.Error("old_string was not found in the file. Ensure it matches the file's current content exactly, including whitespace.");
+            }
 
-        var updated = replaceAll
-            ? normalizedOriginal.Replace(normalizedOld, normalizedNew)
-            : ReplaceFirst(normalizedOriginal, normalizedOld, normalizedNew);
+            if (occurrences > 1 && !replaceAll)
+            {
+                return ToolResult.Error($"old_string matches {occurrences} locations in the file. Provide more surrounding context to make it unique, or set replace_all to true.");
+            }
 
-        updated = TextFileHelper.ConvertLineEndings(updated, lineEnding);
+            var updated = replaceAll
+                ? normalizedOriginal.Replace(normalizedOld, normalizedNew)
+                : ReplaceFirst(normalizedOriginal, normalizedOld, normalizedNew);
 
-        try
-        {
+            var diff = TextDiff.Lines(normalizedOriginal, updated);
+
+            updated = TextFileHelper.ConvertLineEndings(updated, lineEnding);
+
             await TextFileHelper.WriteAsync(full, updated, file.HasUtf8Bom, cancellationToken);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return ToolResult.Error($"Failed to write file: {ex.Message}");
-        }
 
-        return ToolResult.Ok(replaceAll
-            ? $"Replaced {occurrences} occurrence(s) in {path}."
-            : $"Applied edit to {path}.");
+            return ToolResult.Ok(replaceAll
+                ? $"Replaced {occurrences} occurrence(s) in {path}."
+                : $"Applied edit to {path}.", diff);
+        });
     }
 
     private static int CountOccurrences(string haystack, string needle)

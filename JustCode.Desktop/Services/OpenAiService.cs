@@ -57,6 +57,8 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
         Action<ToolStatus>? onToolStatus,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        history = TrimHistory(history, prompt);
+
         var messages = new List<object>();
 
         if (history is not null)
@@ -200,13 +202,13 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
 
             var toolTasks = finalTools.Select(async call =>
             {
-                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "started"));
+                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "started", CallId: call.id));
                 var result = await ExecuteToolAsync(call.function.name, call.function.arguments, cancellationToken);
-                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "done", result));
+                onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "done", result.Output, call.id, result.Success, result.Diff));
                 return new
                 {
                     role = "tool",
-                    content = (object?)result,
+                    content = (object?)result.Output,
                     tool_calls = (object?)null,
                     tool_call_id = (string?)call.id
                 };
@@ -217,6 +219,41 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
         }
 
         throw new InvalidOperationException($"OpenAI/DeepSeek tool call loop exceeded {MaxToolRounds} rounds without a final response.");
+    }
+
+    private List<ChatTurn>? TrimHistory(List<ChatTurn>? history, string prompt)
+    {
+        var maxTokens = config.MaxContextTokens;
+        if (history is null || history.Count == 0 || maxTokens <= 0)
+            return history;
+
+        var list = history.ToList();
+        var total = TokenEstimator.Estimate(prompt)
+            + TokenEstimator.Estimate(config.SystemPrompt ?? string.Empty)
+            + 8;
+
+        var counts = new int[list.Count];
+        for (var i = 0; i < list.Count; i++)
+        {
+            counts[i] = TokenEstimator.EstimateMessages([JsonSerializer.Serialize(list[i], Json.Options)]);
+            total += counts[i];
+        }
+
+        var dropped = 0;
+        while (total > maxTokens && list.Count > 0)
+        {
+            total -= counts[dropped];
+            list.RemoveAt(0);
+            dropped++;
+        }
+
+        if (dropped > 0)
+        {
+            DebugLog.Write($"[OpenAIService] Trimmed {dropped} turn(s) from history to stay within {maxTokens} context tokens.");
+            return list;
+        }
+
+        return history;
     }
 
     private void AddTurn(List<object> messages, ChatTurn t)

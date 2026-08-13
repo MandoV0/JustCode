@@ -15,14 +15,22 @@ type BridgeMessage = {
     error?: string;
 };
 
+export type DiffLine = {
+    type: "add" | "del" | "ctx";
+    text: string;
+};
+
 export type ToolStatus = {
     name: string;
     arguments?: string;
     state: "started" | "done";
     output?: string;
+    callId?: string;
+    success?: boolean;
+    diff?: DiffLine[];
 };
 
-export type ToolRun = ToolStatus & { id: number };
+export type ToolRun = ToolStatus & { id: string };
 
 export type MessageBlock =
     | { type: "text"; text: string }
@@ -33,6 +41,7 @@ export interface ApprovalRequest {
     id: number;
     name: string;
     arguments: string;
+    agentId?: string;
 }
 
 export interface InvokeOptions {
@@ -139,14 +148,6 @@ export async function invoke<T = unknown>(
             reject(err instanceof Error ? err : new Error(String(err)));
         }
     });
-}
-
-export async function invokeStream<T = unknown>(
-    cmd: string,
-    args: Record<string, unknown> | undefined,
-    options?: InvokeOptions,
-): Promise<T> {
-    return invoke<T>(cmd, args, options);
 }
 
 (window as unknown as Record<string, unknown>).justcodePostMessage = (

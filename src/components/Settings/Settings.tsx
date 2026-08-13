@@ -74,7 +74,7 @@ export default function SettingsModal({ open, onClose, configs, activeConfigId, 
 
     function startEdit(config: ApiConfig) {
         setForm({ ...config });
-        setThinkingText(config.thinkingOptions.join(", "));
+        setThinkingText((config.thinkingOptions ?? []).join(", "));
         setError(null);
         setEditing(config);
     }

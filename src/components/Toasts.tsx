@@ -19,6 +19,12 @@ export default function Toasts({ toasts, onDismiss }: ToastsProps) {
 
     useEffect(() => {
         const timers = timersRef.current;
+        for (const [id, timer] of timers) {
+            if (!toasts.some((t) => t.id === id)) {
+                window.clearTimeout(timer);
+                timers.delete(id);
+            }
+        }
         for (const toast of toasts) {
             if (timers.has(toast.id)) continue;
             timers.set(
@@ -29,11 +35,15 @@ export default function Toasts({ toasts, onDismiss }: ToastsProps) {
                 }, AUTO_DISMISS_MS),
             );
         }
+    }, [toasts, onDismiss]);
+
+    useEffect(() => {
+        const timers = timersRef.current;
         return () => {
             for (const timer of timers.values()) window.clearTimeout(timer);
             timers.clear();
         };
-    }, [toasts, onDismiss]);
+    }, []);
 
     return (
         <div className="toasts">

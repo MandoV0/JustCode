@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { type MessageBlock, type ToolRun } from "../../bridge";
+import { type ChatMessage } from "../../messages";
+import { useCopy } from "../../hooks/useCopy";
 import "./ChatView.css";
 import readIcon from "../../assets/tools/read.svg";
 import editIcon from "../../assets/tools/edit.svg";
@@ -17,14 +19,6 @@ import folderCreateIcon from "../../assets/folder_create.svg";
 import forkIcon from "../../assets/fork.svg";
 import deleteIcon from "../../assets/delete.svg";
 import thinkingIcon from "../../assets/thinking.svg";
-
-export interface ChatMessage {
-    id: string;
-    role: "user" | "assistant" | "system";
-    text: string;
-    interrupted?: boolean;
-    blocks?: MessageBlock[];
-}
 
 interface ChatViewProps {
     messages: ChatMessage[];
@@ -166,57 +160,15 @@ export default function ChatView({
                     if (message.role === "system") {
                         return <ContextBanner key={message.id} text={message.text} />;
                     }
-                    const hasContent = (message.blocks && message.blocks.length > 0) || Boolean(message.text);
                     return (
                         <div key={message.id} className={`message ${message.role}`}>
-                            <div className="message-bubble">
-                                {hasContent ? (
-                                    message.blocks && message.blocks.length > 0 ? (
-                                        message.blocks.map((block, blockIndex) => {
-                                            if (block.type === "text") {
-                                                return (
-                                                    <ReactMarkdown key={blockIndex} remarkPlugins={[remarkGfm]}>
-                                                        {block.text}
-                                                    </ReactMarkdown>
-                                                );
-                                            }
-                                            if (block.type === "thinking") {
-                                                return (
-                                                    <ThinkingBlock
-                                                        key={`thinking-${blockIndex}`}
-                                                        text={block.text}
-                                                        streaming={
-                                                            isLoading &&
-                                                            blockIndex === (message.blocks?.length ?? 0) - 1
-                                                        }
-                                                    />
-                                                );
-                                            }
-                                            return <ToolRunCard key={`tool-${block.run.id}`} run={block.run} autoExtend={toolAutoExtend} />;
-                                        })
-                                    ) : (
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                            {message.text}
-                                        </ReactMarkdown>
-                                    )
-                                ) : (
-                                    <div className="thinking-fluid">
-                                        <img src={thinkingIcon} alt="Thinking" className="thinking-fluid-icon" />
-                                        <div className="thinking-shimmer" />
-                                        <span className="thinking-text">Thinking...</span>
-                                    </div>
-                                )}
-                                {message.interrupted && (
-                                    <div className="message-interrupted">Stopped</div>
-                                )}
-                            </div>
-                            {!isLoading && (onFork || onDeleteMessage) && (
-                                <MessageActions
-                                    message={message}
-                                    onFork={onFork}
-                                    onDeleteMessage={onDeleteMessage}
-                                />
-                            )}
+                            <MessageBubble
+                                message={message}
+                                isLoading={isLoading}
+                                toolAutoExtend={toolAutoExtend}
+                                onFork={onFork}
+                                onDeleteMessage={onDeleteMessage}
+                            />
                         </div>
                     );
                 })}
@@ -229,6 +181,83 @@ export default function ChatView({
             )}
         </div>
     );
+}
+
+function Markdown({ text }: { text: string }) {
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+}
+
+function blockKey(block: MessageBlock, index: number): string {
+    if (block.type === "tool") return `tool-${block.run.id}`;
+    if (block.type === "thinking") return `thinking-${index}`;
+    return `text-${index}`;
+}
+
+function MessageBubble({
+    message,
+    isLoading,
+    toolAutoExtend,
+    onFork,
+    onDeleteMessage,
+}: {
+    message: ChatMessage;
+    isLoading: boolean;
+    toolAutoExtend: boolean;
+    onFork?: () => void;
+    onDeleteMessage?: (id: string) => void;
+}) {
+    const blocks = message.blocks ?? [];
+    const hasContent = blocks.length > 0 || Boolean(message.text);
+
+    return (
+        <div className="message-bubble">
+            {hasContent ? (
+                blocks.length > 0 ? (
+                    blocks.map((block, blockIndex) => (
+                        <MessageBlockView
+                            key={blockKey(block, blockIndex)}
+                            block={block}
+                            streaming={isLoading && blockIndex === blocks.length - 1}
+                            toolAutoExtend={toolAutoExtend}
+                        />
+                    ))
+                ) : (
+                    <Markdown text={message.text} />
+                )
+            ) : (
+                <ThinkingFluid />
+            )}
+            {message.interrupted && (
+                <div className="message-interrupted">Stopped</div>
+            )}
+            {!isLoading && (onFork || onDeleteMessage) && (
+                <MessageActions
+                    message={message}
+                    onFork={onFork}
+                    onDeleteMessage={onDeleteMessage}
+                />
+            )}
+        </div>
+    );
+}
+
+function MessageBlockView({
+    block,
+    streaming,
+    toolAutoExtend,
+}: {
+    block: MessageBlock;
+    streaming: boolean;
+    toolAutoExtend: boolean;
+}) {
+    if (block.type === "text") return <Markdown text={block.text} />;
+    if (block.type === "thinking") {
+        return <ThinkingBlock text={block.text} streaming={streaming} />;
+    }
+    if (block.type === "tool") {
+        return <ToolRunCard run={block.run} autoExtend={toolAutoExtend} />;
+    }
+    return null;
 }
 
 type ToolStatusKey = "running" | "success" | "error";
@@ -248,7 +277,7 @@ function ContextBanner({ text }: { text: string }) {
             </button>
             {expanded && (
                 <div className="context-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+                    <Markdown text={text} />
                 </div>
             )}
         </div>
@@ -276,6 +305,16 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }
     );
 }
 
+function ThinkingFluid() {
+    return (
+        <div className="thinking-fluid">
+            <img src={thinkingIcon} alt="Thinking" className="thinking-fluid-icon" />
+            <div className="thinking-shimmer" />
+            <span className="thinking-text">Thinking...</span>
+        </div>
+    );
+}
+
 function MessageActions({
     message,
     onFork,
@@ -285,23 +324,11 @@ function MessageActions({
     onFork?: () => void;
     onDeleteMessage?: (id: string) => void;
 }) {
-    const [copied, setCopied] = useState(false);
-
-    async function handleCopy() {
-        const text = messagePlainText(message);
-        if (!text) return;
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-        } catch {
-            // Clipboard unavailable
-        }
-    }
+    const { copied, copy } = useCopy();
 
     return (
         <div className="message-actions">
-            <button className="msg-action" onClick={handleCopy} title="Copy message">
+            <button className="msg-action" onClick={() => copy(messagePlainText(message))} title="Copy message">
                 {copied ? "Copied" : "Copy"}
             </button>
             {onFork && (
@@ -335,21 +362,19 @@ function messagePlainText(message: ChatMessage): string {
 
 function ToolRunCard({ run, autoExtend }: { run: ToolRun; autoExtend: boolean }) {
     const [expanded, setExpanded] = useState(autoExtend);
-    const [copied, setCopied] = useState(false);
+    const { copied, copy } = useCopy();
 
     const meta = TOOL_META[run.name] ?? DEFAULT_TOOL_META;
     const primary = primaryArg(run.arguments ?? "");
     const status = resolveStatus(run);
-
-    async function handleCopy() {
-        try {
-            await navigator.clipboard.writeText(run.output ?? "");
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-        } catch {
-            // Clipboard unavailable
-        }
-    }
+    const diffLines = run.diff ?? [];
+    const hasDiff = diffLines.length > 0;
+    const copyText = [
+        run.output ?? "",
+        ...diffLines.map((l) => `${l.type === "add" ? "+" : l.type === "del" ? "-" : " "}${l.text}`),
+    ]
+        .filter(Boolean)
+        .join("\n");
 
     return (
         <div className={`tool-run ${run.state} ${expanded ? "open" : ""}`}>
@@ -369,10 +394,28 @@ function ToolRunCard({ run, autoExtend }: { run: ToolRun; autoExtend: boolean })
             {expanded && (
                 <>
                     <pre className="tool-run-args">{formatArgs(run.arguments ?? "")}</pre>
-                    {run.output && (
+                    {run.output && !hasDiff && (
                         <div className="tool-run-output-block">
                             <pre className="tool-run-output">{run.output}</pre>
-                            <button className="tool-run-copy" onClick={handleCopy}>
+                            <button className="tool-run-copy" onClick={() => copy(copyText)}>
+                                {copied ? "Copied" : "Copy"}
+                            </button>
+                        </div>
+                    )}
+                    {hasDiff && (
+                        <div className="tool-run-diff-block">
+                            {run.output && <div className="tool-run-diff-summary">{run.output}</div>}
+                            <div className="tool-run-diff">
+                                {diffLines.map((line, i) => (
+                                    <div key={i} className={`diff-line ${line.type}`}>
+                                        <span className="diff-sign">
+                                            {line.type === "add" ? "+" : line.type === "del" ? "-" : " "}
+                                        </span>
+                                        <span className="diff-text">{line.text || " "}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <button className="tool-run-copy" onClick={() => copy(copyText)}>
                                 {copied ? "Copied" : "Copy"}
                             </button>
                         </div>
@@ -385,6 +428,10 @@ function ToolRunCard({ run, autoExtend }: { run: ToolRun; autoExtend: boolean })
 
 function resolveStatus(run: ToolRun): { key: ToolStatusKey; label: string } {
     if (run.state === "started") return { key: "running", label: "Running" };
+
+    if (typeof run.success === "boolean") {
+        return run.success ? { key: "success", label: "Success" } : { key: "error", label: "Error" };
+    }
 
     const output = run.output ?? "";
     if (

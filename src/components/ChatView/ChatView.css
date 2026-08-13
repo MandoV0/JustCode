@@ -863,3 +863,89 @@
 
   margin-bottom: 4px;
 }
+.tool-run-diff-block {
+  display: flex;
+  flex-direction: column;
+
+  gap: var(--space-1);
+
+  padding: var(--space-2);
+
+  border-top: 1px solid var(--border);
+}
+
+.tool-run-diff-summary {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.tool-run-diff {
+  overflow-x: auto;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+
+  background: var(--code-background);
+}
+
+.diff-line {
+  display: flex;
+
+  align-items: stretch;
+
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.diff-sign {
+  width: 22px;
+
+  flex-shrink: 0;
+
+  padding-right: 4px;
+
+  text-align: right;
+
+  color: var(--text-2);
+
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1;
+
+  min-width: 0;
+
+  padding-right: var(--space-2);
+
+  white-space: pre-wrap;
+
+  word-break: break-word;
+
+  color: var(--text-1);
+}
+
+.diff-line.add {
+  background: var(--diff-add);
+}
+
+.diff-line.add .diff-sign {
+  color: var(--green);
+}
+
+.diff-line.add .diff-text {
+  color: var(--text-0);
+}
+
+.diff-line.del {
+  background: var(--diff-remove);
+}
+
+.diff-line.del .diff-sign {
+  color: var(--red);
+}
+
+.diff-line.del .diff-text {
+  color: var(--text-0);
+}

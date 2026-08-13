@@ -3,17 +3,15 @@ using JustCode.Services;
 
 namespace JustCode.Tools;
 
-public class ListDirTool : ITool
+public class ListDirTool : WorkspaceTool
 {
-    private readonly ProjectService _project;
+    public ListDirTool(ProjectService project) : base(project) { }
 
-    public ListDirTool(ProjectService project) => _project = project;
+    public override string Name => "list_dir";
 
-    public string Name => "list_dir";
+    public override string Description => "Lists the content of a directory.";
 
-    public string Description => "Lists the content of a directory.";
-
-    public object ParameterSchema => new
+    public override object ParameterSchema => new
     {
         type = "object",
         properties = new
@@ -27,12 +25,13 @@ public class ListDirTool : ITool
         required = new[] { "path" }
     };
 
-    public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
         var path = arguments.GetProperty("path").GetString()!;
-        if (!_project.TryResolvePath(path, out var full, out var error))
+
+        if (ResolvePath(path, out var full) is { } error)
         {
-            return ToolResult.Error(error ?? "Path resolution failed.");
+            return error;
         }
 
         if (!Directory.Exists(full))
@@ -40,7 +39,7 @@ public class ListDirTool : ITool
             return ToolResult.Error($"Directory not found: {path}");
         }
 
-        try
+        return await ToolHelpers.GuardAsync("list directory", () =>
         {
             var entries = Directory
                 .EnumerateFileSystemEntries(full)
@@ -54,11 +53,7 @@ public class ListDirTool : ITool
                 })
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase);
 
-            return ToolResult.Ok(string.Join(Environment.NewLine, entries));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return ToolResult.Error($"Failed to list directory: {ex.Message}");
-        }
+            return Task.FromResult(ToolResult.Ok(string.Join(Environment.NewLine, entries)));
+        });
     }
 }

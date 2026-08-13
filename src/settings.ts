@@ -1,18 +1,14 @@
-const TOOL_AUTO_EXTEND_KEY = "justcode.toolAutoExtend";
-const YOLO_MODE_KEY = "justcode.yoloMode";
-
-export function getToolAutoExtend(): boolean {
-    return localStorage.getItem(TOOL_AUTO_EXTEND_KEY) === "true";
+function createBooleanSetting(key: string) {
+    return {
+        get: () => localStorage.getItem(key) === "true",
+        set: (value: boolean) => localStorage.setItem(key, String(value)),
+    };
 }
 
-export function setToolAutoExtend(value: boolean): void {
-    localStorage.setItem(TOOL_AUTO_EXTEND_KEY, String(value));
-}
+const toolAutoExtend = createBooleanSetting("justcode.toolAutoExtend");
+const yoloMode = createBooleanSetting("justcode.yoloMode");
 
-export function getYoloMode(): boolean {
-    return localStorage.getItem(YOLO_MODE_KEY) === "true";
-}
-
-export function setYoloMode(value: boolean): void {
-    localStorage.setItem(YOLO_MODE_KEY, String(value));
-}
+export const getToolAutoExtend = toolAutoExtend.get;
+export const setToolAutoExtend = toolAutoExtend.set;
+export const getYoloMode = yoloMode.get;
+export const setYoloMode = yoloMode.set;

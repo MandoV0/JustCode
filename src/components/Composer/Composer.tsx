@@ -48,7 +48,7 @@ export default function Composer({
     const activeConfig = configs.find((c) => c.id === activeConfigId) ?? null;
     const noConfigs = configs.length === 0;
     const thinkingOptions =
-        activeConfig && activeConfig.thinkingOptions.length > 0
+        activeConfig && Array.isArray(activeConfig.thinkingOptions) && activeConfig.thinkingOptions.length > 0
             ? activeConfig.thinkingOptions
             : FALLBACK_THINKING_OPTIONS;
 

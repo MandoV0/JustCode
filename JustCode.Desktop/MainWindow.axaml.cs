@@ -13,7 +13,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         var appData = new AppDataService();
-        var project = new ProjectService();
+        var project = new ProjectService(appData);
 
         List<ITool> tools =
         [

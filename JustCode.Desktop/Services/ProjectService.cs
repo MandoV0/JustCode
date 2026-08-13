@@ -26,11 +26,10 @@ public sealed class ProjectService
     private List<Project> _projects = [];
     private string? _activeId;
 
-    public ProjectService()
+    public ProjectService(AppDataService appData)
     {
-        var root = Path.Combine(AppPaths.AppDataBase, "JustCode");
-        _projectsPath = Path.Combine(root, "projects.json");
-        _activePath = Path.Combine(root, "active-project.json");
+        _projectsPath = Path.Combine(appData.Root, "projects.json");
+        _activePath = Path.Combine(appData.Root, "active-project.json");
         Load();
     }
 

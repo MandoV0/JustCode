@@ -13,16 +13,18 @@ export function estimateMessageTokens(message: {
     text?: string;
     blocks?: MessageBlock[];
 }): number {
-    let chars = message.text?.length ?? 0;
-    if (message.blocks) {
+    let chars = 0;
+    if (message.blocks && message.blocks.length > 0) {
         for (const block of message.blocks) {
             if (block.type === "text" || block.type === "thinking") {
-                chars += block.text.length;
+                chars += block.text?.length ?? 0;
             } else if (block.type === "tool") {
-                chars += (block.run.arguments ?? "").length;
-                chars += (block.run.output ?? "").length;
+                chars += (block.run?.arguments ?? "").length;
+                chars += (block.run?.output ?? "").length;
             }
         }
+    } else {
+        chars = message.text?.length ?? 0;
     }
     return estimateTokens(chars) + PER_MESSAGE_OVERHEAD;
 }

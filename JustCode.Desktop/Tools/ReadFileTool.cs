@@ -4,18 +4,16 @@ using JustCode.Services;
 
 namespace JustCode.Tools;
 
-public class ReadFileTool : ITool
+public class ReadFileTool : WorkspaceTool
 {
-    private readonly ProjectService _project;
+    public ReadFileTool(ProjectService project) : base(project) { }
 
-    public ReadFileTool(ProjectService project) => _project = project;
-
-    public string Name => "read";
-    public string Description =>
+    public override string Name => "read";
+    public override string Description =>
         "Reads a file relative to the workspace. Supports slicing with startLine/endLine, " +
         "prefixes lines with their numbers, detects binary files, and truncates huge or long-line content.";
 
-    public object ParameterSchema => new
+    public override object ParameterSchema => new
     {
         type = "object",
         properties = new
@@ -50,14 +48,12 @@ public class ReadFileTool : ITool
     private const int MaxLineChars = 2_000;
     private const int BinaryProbeBytes = 1_024;
 
-    public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
         var path = arguments.GetProperty("path").GetString()!;
 
-        if (!_project.TryResolvePath(path, out var full, out var error, checkExists: true))
-        {
-            return ToolResult.Error(error ?? "Path resolution failed.");
-        }
+        if (ResolvePath(path, out var full, checkExists: true) is { } error)
+            return error;
 
         var startLine = arguments.TryGetProperty("startLine", out var startEl) && startEl.ValueKind == JsonValueKind.Number
             ? startEl.GetInt32()
@@ -70,8 +66,7 @@ public class ReadFileTool : ITool
         if (startLine < 1) return ToolResult.Error("startLine must be at least 1.");
         if (endLine < startLine) return ToolResult.Error("endLine must be greater than or equal to startLine.");
 
-        byte[] bytes;
-        try
+        return await ToolHelpers.GuardAsync("read file", async () =>
         {
             var info = new FileInfo(full);
             if (info.Length > MaxFileBytes)
@@ -81,73 +76,69 @@ public class ReadFileTool : ITool
                     "Use startLine/endLine to read a specific slice instead.");
             }
 
-            bytes = await File.ReadAllBytesAsync(full, cancellationToken);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return ToolResult.Error($"Failed to read file: {ex.Message}");
-        }
+            var bytes = await File.ReadAllBytesAsync(full, cancellationToken);
 
-        var probe = Math.Min(bytes.Length, BinaryProbeBytes);
-        for (var i = 0; i < probe; i++)
-        {
-            if (bytes[i] == 0)
+            var probe = Math.Min(bytes.Length, BinaryProbeBytes);
+            for (var i = 0; i < probe; i++)
             {
-                return ToolResult.Error($"Binary file detected: {path} ({bytes.Length:N0} bytes). Cannot display as text.");
-            }
-        }
-
-        string text;
-        if (TextFileHelper.HasUtf8Bom(bytes))
-        {
-            text = Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
-        }
-        else
-        {
-            text = Encoding.UTF8.GetString(bytes);
-        }
-
-        var lines = text.Split('\n');
-        var totalLines = lines.Length;
-        var width = totalLines.ToString().Length;
-
-        var builder = new StringBuilder(MaxChars);
-        var to = Math.Min(endLine, totalLines);
-        var truncated = false;
-        var lineTruncated = false;
-
-        for (var i = startLine - 1; i < to; i++)
-        {
-            var line = lines[i];
-            if (line.EndsWith('\r')) line = line[..^1];
-
-            if (line.Length > MaxLineChars)
-            {
-                line = line[..MaxLineChars] + " …(line truncated)";
-                lineTruncated = true;
+                if (bytes[i] == 0)
+                {
+                    return ToolResult.Error($"Binary file detected: {path} ({bytes.Length:N0} bytes). Cannot display as text.");
+                }
             }
 
-            if (lineNumbers)
+            string text;
+            if (TextFileHelper.HasUtf8Bom(bytes))
             {
-                var number = (i + 1).ToString();
-                builder.Append(number).Append(' ', width - number.Length + 1);
+                text = Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
             }
-            builder.AppendLine(line);
-
-            if (builder.Length > MaxChars)
+            else
             {
-                builder.Length = MaxChars;
-                truncated = true;
-                break;
+                text = Encoding.UTF8.GetString(bytes);
             }
-        }
 
-        var header = $"File: {path} — {totalLines:N0} lines, {bytes.Length / 1024.0:F1} KB";
-        if (truncated) header += " (output truncated, use a smaller slice)";
+            var lines = text.Split('\n');
+            var totalLines = lines.Length;
+            var width = totalLines.ToString().Length;
 
-        var body = builder.ToString().TrimEnd('\r', '\n');
-        if (lineTruncated) body += "\n…(some lines were truncated)";
+            var builder = new StringBuilder(MaxChars);
+            var to = Math.Min(endLine, totalLines);
+            var truncated = false;
+            var lineTruncated = false;
 
-        return ToolResult.Ok($"{header}\n{body}");
+            for (var i = startLine - 1; i < to; i++)
+            {
+                var line = lines[i];
+                if (line.EndsWith('\r')) line = line[..^1];
+
+                if (line.Length > MaxLineChars)
+                {
+                    line = line[..MaxLineChars] + " …(line truncated)";
+                    lineTruncated = true;
+                }
+
+                if (lineNumbers)
+                {
+                    var number = (i + 1).ToString();
+                    builder.Append(number).Append(' ', width - number.Length + 1);
+                }
+                builder.AppendLine(line);
+
+                if (builder.Length > MaxChars)
+                {
+                    builder.Length = MaxChars;
+                    truncated = true;
+                    break;
+                }
+            }
+
+            var header = $"File: {path} — {totalLines:N0} lines, {bytes.Length / 1024.0:F1} KB";
+            if (truncated) header += " (output truncated, use a smaller slice)";
+
+            var body = builder.ToString().TrimEnd('\r', '\n');
+            if (lineTruncated) body += "\n…(some lines were truncated)";
+
+            return ToolResult.Ok($"{header}\n{body}");
+        });
     }
 }

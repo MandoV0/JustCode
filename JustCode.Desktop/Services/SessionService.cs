@@ -76,6 +76,13 @@ internal sealed class SessionService
         File.Move(temp, path, overwrite: true);
     }
 
+    public void Rename(string id, string title)
+    {
+        var session = Load(id);
+        session.Title = title;
+        Save(session);
+    }
+
 
     public void Delete(string id)
     {

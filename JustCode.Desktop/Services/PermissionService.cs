@@ -16,7 +16,7 @@ public sealed class PermissionService(Action<object> post)
     /// <summary>When true (YOLO mode), every approval request is granted immediately.</summary>
     public bool ApproveAll { get; set; }
 
-    public async Task<bool> RequestAsync(string name, string arguments, CancellationToken cancellationToken)
+    public async Task<bool> RequestAsync(string name, string arguments, CancellationToken cancellationToken, string? agentId = null)
     {
         if (ApproveAll)
             return true;
@@ -32,7 +32,7 @@ public sealed class PermissionService(Action<object> post)
 
         try
         {
-            post(new { kind = "tool_approval", data = new { id, name, arguments } });
+            post(new { kind = "tool_approval", data = new { id, name, arguments, agentId } });
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(ApprovalTimeoutSeconds));
