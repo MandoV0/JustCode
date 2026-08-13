@@ -4,10 +4,11 @@ type Pending = {
     timer: number;
     onChunk?: (data: unknown) => void;
     onToolStatus?: (status: ToolStatus) => void;
+    onReasoningDelta?: (data: string) => void;
 };
 
 type BridgeMessage = {
-    kind: "response" | "chunk" | "tool_status";
+    kind: "response" | "chunk" | "tool_status" | "reasoning_chunk" | "tool_approval";
     id: number;
     ok?: boolean;
     data?: unknown;
@@ -21,21 +22,37 @@ export type ToolStatus = {
     output?: string;
 };
 
+export type ToolRun = ToolStatus & { id: number };
+
+export type MessageBlock =
+    | { type: "text"; text: string }
+    | { type: "tool"; run: ToolRun }
+    | { type: "thinking"; text: string };
+
+export interface ApprovalRequest {
+    id: number;
+    name: string;
+    arguments: string;
+}
+
 export interface InvokeOptions {
     timeoutMs?: number;
     onChunk?: (data: unknown) => void;
     onToolStatus?: (status: ToolStatus) => void;
+    onReasoningDelta?: (delta: string) => void;
 }
 
 export interface SessionMessage {
     id: string;
     role: string;
     text: string;
+    blocks?: MessageBlock[];
 }
 
 export interface SessionSummary {
     id: string;
     title: string;
+    projectId?: string | null;
     updatedAt: number;
     messageCount: number;
 }
@@ -43,6 +60,7 @@ export interface SessionSummary {
 export interface Session {
     id: string;
     title: string;
+    projectId?: string | null;
     createdAt: number;
     updatedAt: number;
     messages: SessionMessage[];
@@ -50,7 +68,13 @@ export interface Session {
 
 let nextId = 1;
 const pending = new Map<number, Pending>();
-const DEFAULT_REQUEST_TIMEOUT_MS = 60000*50;
+let toolApprovalHandler: ((req: ApprovalRequest) => void) | null = null;
+const REQUEST_TIMEOUT_MS = 50 * 60 * 1000; // 50 minutes
+const NATIVE_BRIDGE_WAIT_MS = 5 * 1000; // 5 seconds
+
+export function setToolApprovalHandler(handler: ((req: ApprovalRequest) => void) | null) {
+    toolApprovalHandler = handler;
+}
 
 const waitForNativeBridge = new Promise<void>((resolve, reject) => {
     const started = Date.now();
@@ -58,7 +82,7 @@ const waitForNativeBridge = new Promise<void>((resolve, reject) => {
         if (typeof (window as unknown as Record<string, unknown>).invokeCSharpAction === "function") {
             window.clearInterval(timer);
             resolve();
-        } else if (Date.now() - started > 5000*50) {
+        } else if (Date.now() - started > NATIVE_BRIDGE_WAIT_MS) {
             window.clearInterval(timer);
             reject(new Error("Native bridge unavailable: invokeCSharpAction was not found within 5000ms"));
         }
@@ -82,7 +106,7 @@ export async function invoke<T = unknown>(
 ): Promise<T> {
     await waitForNativeBridge;
     const id = nextId++;
-    const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, onChunk, onToolStatus } = options ?? {};
+    const { timeoutMs = REQUEST_TIMEOUT_MS, onChunk, onToolStatus, onReasoningDelta } = options ?? {};
 
     return new Promise<T>((resolve, reject) => {
         const timer = window.setTimeout(() => {
@@ -104,6 +128,7 @@ export async function invoke<T = unknown>(
             timer,
             onChunk,
             onToolStatus,
+            onReasoningDelta,
         });
 
         try {
@@ -134,6 +159,14 @@ export async function invokeStream<T = unknown>(
     }
     if (parsed?.kind === "tool_status") {
         pending.get(parsed.id)?.onToolStatus?.(parsed.data as ToolStatus);
+        return;
+    }
+    if (parsed?.kind === "reasoning_chunk") {
+        pending.get(parsed.id)?.onReasoningDelta?.(parsed.data as string);
+        return;
+    }
+    if (parsed?.kind === "tool_approval") {
+        toolApprovalHandler?.(parsed.data as ApprovalRequest);
         return;
     }
     if (parsed?.kind !== "response") {

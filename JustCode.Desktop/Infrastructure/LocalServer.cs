@@ -102,8 +102,12 @@ internal sealed class LocalServer : IDisposable
     {
         var candidate = Path.GetFullPath(Path.Combine(_root, path));
 
-        if (!candidate.StartsWith(_root, StringComparison.OrdinalIgnoreCase))
+        var normalizedRoot = _root + Path.DirectorySeparatorChar;
+        if (!candidate.Equals(_root, StringComparison.OrdinalIgnoreCase) &&
+            !candidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        {
             throw new UnauthorizedAccessException($"Directory traversal blocked: {path}");
+        }
 
         if (File.Exists(candidate))
             return candidate;

@@ -1,7 +1,9 @@
+using JustCode.Infrastructure;
+
 namespace JustCode.Services;
 
 /// <summary>
-/// Cross platform app data directory:
+/// Cross platform app data directory for JustCode:
 /// Windows  %APPDATA%\JustCode
 /// macOS    ~/Library/Application Support/JustCode
 /// Linux    $XDG_DATA_HOME or ~/.local/share/JustCode
@@ -12,22 +14,7 @@ internal sealed class AppDataService
 
     public AppDataService()
     {
-        Root = Path.Combine(ResolveBaseDir(), "JustCode");
+        Root = Path.Combine(AppPaths.AppDataBase, "JustCode");
         Directory.CreateDirectory(Root);
-    }
-
-    private static string ResolveBaseDir()
-    {
-        if (OperatingSystem.IsWindows())
-            return Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        if (OperatingSystem.IsMacOS())
-            return Path.Combine(home, "Library", "Application Support");
-
-        return Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg
-            ? xdg
-            : Path.Combine(home, ".local", "share");
     }
 }

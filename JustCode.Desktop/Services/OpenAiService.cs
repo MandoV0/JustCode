@@ -4,20 +4,20 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using JustCode.Infrastructure;
+using JustCode.Tools;
 
 namespace JustCode.Services;
 
 public sealed record OpenAiConfig(
     string BaseUrl = "https://api.openai.com/v1/chat/completions",
     string ApiKey = "",
-    string Model = "gpt-4o",
-    bool StrictMode = false
+    string Model = "gpt-5.6-luna",
+    bool StrictMode = false,
+    bool EnableThinking = false,
+    string? SystemPrompt = null,
+    int MaxContextTokens = 64_000
 )
 {
-    public bool IsDeepSeek =>
-        Model.Contains("deepseek", StringComparison.OrdinalIgnoreCase) ||
-        BaseUrl.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
-
     public string NormalizedUrl
     {
         get
@@ -32,7 +32,8 @@ public sealed record OpenAiConfig(
     }
 }
 
-public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmProviderService(tools)
+public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, PermissionService? permissions = null)
+    : LlmProviderService(tools, permissions)
 {
     private const int MaxToolRounds = 32;
 
@@ -62,40 +63,7 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
         {
             foreach (var t in history)
             {
-                if (t.Role is "assistant" or "model")
-                {
-                    if (config.IsDeepSeek)
-                    {
-                        messages.Add(new
-                        {
-                            role = "assistant",
-                            content = (object?)t.Text,
-                            reasoning_content = (object?)(t.Reasoning ?? string.Empty),
-                            tool_calls = (object?)null,
-                            tool_call_id = (string?)null
-                        });
-                    }
-                    else
-                    {
-                        messages.Add(new
-                        {
-                            role = "assistant",
-                            content = (object?)t.Text,
-                            tool_calls = (object?)null,
-                            tool_call_id = (string?)null
-                        });
-                    }
-                }
-                else
-                {
-                    messages.Add(new
-                    {
-                        role = "user",
-                        content = (object?)t.Text,
-                        tool_calls = (object?)null,
-                        tool_call_id = (string?)null
-                    });
-                }
+                AddTurn(messages, t);
             }
         }
 
@@ -106,6 +74,17 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
             tool_calls = (object?)null,
             tool_call_id = (string?)null
         });
+
+        if (!string.IsNullOrWhiteSpace(config.SystemPrompt))
+        {
+            messages.Insert(0, new
+            {
+                role = "system",
+                content = (object?)config.SystemPrompt,
+                tool_calls = (object?)null,
+                tool_call_id = (string?)null
+            });
+        }
 
         var toolDeclarations = Tools.Values.Select(t => new
         {
@@ -129,7 +108,7 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
                 ["tools"] = toolDeclarations.Length > 0 ? toolDeclarations : null
             };
 
-            if (config.IsDeepSeek)
+            if (config.EnableThinking)
             {
                 requestBody["thinking"] = new { type = "enabled" };
                 if (ThinkingEffort is { Length: > 0 } and not "default")
@@ -157,7 +136,6 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
                 var chunk = JsonSerializer.Deserialize<OpenAiChunk>(line.AsSpan(6), Json.Options)?.Choices?.FirstOrDefault()?.Delta;
                 if (chunk is null) continue;
 
-                // Support both DeepSeek reasoning_content and OpenAI reasoning delta
                 var reasoningDelta = chunk.ReasoningContent ?? chunk.Reasoning;
                 if (!string.IsNullOrEmpty(reasoningDelta))
                 {
@@ -185,7 +163,6 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
                 }
             }
 
-            // No tool calls => final text response and done
             if (activeTools.Count == 0) yield break;
 
             DebugLog.Write($"[OpenAIService] Tool round {round + 1}/{MaxToolRounds}, calls: {activeTools.Count}");
@@ -199,7 +176,7 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
 
             var assistantContent = fullContent.Length > 0 ? fullContent.ToString() : null;
 
-            if (config.IsDeepSeek)
+            if (config.EnableThinking)
             {
                 messages.Add(new
                 {
@@ -221,7 +198,6 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
                 });
             }
 
-            // Execute tools in parallel for speed
             var toolTasks = finalTools.Select(async call =>
             {
                 onToolStatus?.Invoke(new ToolStatus(call.function.name, call.function.arguments, "started"));
@@ -241,6 +217,125 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools) : LlmP
         }
 
         throw new InvalidOperationException($"OpenAI/DeepSeek tool call loop exceeded {MaxToolRounds} rounds without a final response.");
+    }
+
+    private void AddTurn(List<object> messages, ChatTurn t)
+    {
+        if (t.Role == "system")
+        {
+            messages.Add(new
+            {
+                role = "system",
+                content = (object?)t.Text,
+                tool_calls = (object?)null,
+                tool_call_id = (string?)null
+            });
+            return;
+        }
+
+        if (t.Role == "user")
+        {
+            messages.Add(new
+            {
+                role = "user",
+                content = (object?)t.Text,
+                tool_calls = (object?)null,
+                tool_call_id = (string?)null
+            });
+            return;
+        }
+
+        var runs = new List<(string Name, string Args, string Output)>();
+        var thinkingText = new StringBuilder();
+
+        if (t.Blocks is not null)
+        {
+            foreach (var block in t.Blocks)
+            {
+                if (block.ValueKind != JsonValueKind.Object || !block.TryGetProperty("type", out var typeEl))
+                    continue;
+
+                if (typeEl.GetString() == "tool" && block.TryGetProperty("run", out var run) && run.ValueKind == JsonValueKind.Object)
+                {
+                    var name = run.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+                    var args = run.TryGetProperty("arguments", out var argsProp) ? argsProp.GetString() ?? string.Empty : string.Empty;
+                    var output = run.TryGetProperty("output", out var outputProp) ? outputProp.GetString() ?? string.Empty : string.Empty;
+                    runs.Add((name, args, output));
+                }
+                else if (typeEl.GetString() == "thinking" && block.TryGetProperty("text", out var textProp))
+                {
+                    thinkingText.Append(textProp.GetString());
+                }
+            }
+        }
+
+        if (runs.Count == 0)
+        {
+            if (config.EnableThinking)
+            {
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = (object?)t.Text,
+                    reasoning_content = (object?)(t.Reasoning ?? string.Empty),
+                    tool_calls = (object?)null,
+                    tool_call_id = (string?)null
+                });
+            }
+            else
+            {
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = (object?)t.Text,
+                    tool_calls = (object?)null,
+                    tool_call_id = (string?)null
+                });
+            }
+
+            return;
+        }
+
+        var reasoning = thinkingText.Length > 0 ? thinkingText.ToString() : t.Reasoning;
+        var toolCalls = runs.Select((r, i) => new
+        {
+            id = $"call_{i}",
+            type = "function",
+            function = new { name = r.Name, arguments = r.Args }
+        }).ToList();
+
+        if (config.EnableThinking)
+        {
+            messages.Add(new
+            {
+                role = "assistant",
+                content = (object?)(string.IsNullOrEmpty(t.Text) ? null : t.Text),
+                reasoning_content = (object?)(reasoning ?? string.Empty),
+                tool_calls = (object?)toolCalls,
+                tool_call_id = (string?)null
+            });
+        }
+        else
+        {
+            messages.Add(new
+            {
+                role = "assistant",
+                content = (object?)(string.IsNullOrEmpty(t.Text) ? null : t.Text),
+                tool_calls = (object?)toolCalls,
+                tool_call_id = (string?)null
+            });
+        }
+
+        for (var i = 0; i < runs.Count; i++)
+        {
+            messages.Add(new
+            {
+                role = "tool",
+                content = (object?)runs[i].Output,
+                tool_calls = (object?)null,
+                tool_call_id = (string?)$"call_{i}"
+            });
+        }
     }
 
     private sealed class ToolCallAccumulator(string id, string name)

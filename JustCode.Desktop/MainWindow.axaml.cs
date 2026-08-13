@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using JustCode.Infrastructure;
 using JustCode.Services;
 using JustCode.Tools;
 
@@ -13,19 +12,28 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        List<ITool> tools = new List<ITool> { new ReadFileTool(), new ListDirTool(), new EditFileTool(), new SearchTool(), new WriteTool(), new BashTool() };
-
         var appData = new AppDataService();
+        var project = new ProjectService();
+
+        List<ITool> tools =
+        [
+            new ReadFileTool(project),
+            new ListDirTool(project),
+            new EditFileTool(project),
+            new SearchTool(project),
+            new WriteTool(project),
+            new BashTool(project),
+            new WebSearchTool(),
+            new WebFetchTool(),
+        ];
+
         _bridge = new Bridge.Bridge(
             WebView,
-            new OpenAIService(new OpenAiConfig
-            {
-                BaseUrl = "https://api.deepseek.com",
-                ApiKey = EnvLoader.Get("DEEPSEEK_API_KEY"),
-                Model = "deepseek-v4-flash"
-            }, tools),
+            tools,
             new SessionService(appData),
-            appData);
+            appData,
+            new ApiConfigService(appData),
+            project);
 
         Opened += OnOpened;
     }

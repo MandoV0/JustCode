@@ -1,10 +1,18 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using JustCode.Services;
 
 namespace JustCode.Tools;
 
 public class SearchTool : ITool
 {
+    private readonly ProjectService _project;
+
+    public SearchTool(ProjectService project) => _project = project;
+
+    private const long MaxSearchFileBytes = 10L * 1024 * 1024;
+    private const int BinaryProbeBytes = 1024;
+
     public string Name => "search";
     public string Description => "Searches file contents for a text pattern or regular expression, returning matching files and lines (grep-style).";
 
@@ -56,9 +64,9 @@ public class SearchTool : ITool
             return ToolResult.Error("max_results must be greater than 0.");
         }
 
-        if (!ToolHelpers.TryResolvePath(searchPath, out var root, out var error))
+        if (!_project.TryResolvePath(searchPath, out var root, out var error))
         {
-            return error!;
+            return ToolResult.Error(error ?? "Path resolution failed.");
         }
 
         if (!Directory.Exists(root))
@@ -92,6 +100,23 @@ public class SearchTool : ITool
                 cancellationToken.ThrowIfCancellationRequested();
                 filesSearched++;
 
+                try
+                {
+                    if (new FileInfo(file).Length > MaxSearchFileBytes)
+                    {
+                        continue; // Skip files too large to read safely.
+                    }
+
+                    if (await IsBinaryAsync(file, cancellationToken))
+                    {
+                        continue; // Skip binary files.
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    continue;
+                }
+
                 string content;
                 try
                 {
@@ -100,11 +125,6 @@ public class SearchTool : ITool
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
                 {
                     continue; // Skip files we cannot read.
-                }
-
-                if (content.Contains('\0'))
-                {
-                    continue; // Skip binary files.
                 }
 
                 foreach (var (line, number) in EnumerateLines(content))
@@ -118,7 +138,7 @@ public class SearchTool : ITool
                         continue;
                     }
 
-                    var relative = Path.GetRelativePath(Environment.CurrentDirectory, file);
+                    var relative = Path.GetRelativePath(_project.Root, file);
                     results.Add(showLines
                         ? $"{relative}:{number}: {Truncate(line)}"
                         : $"{relative}:{number}");
@@ -182,5 +202,17 @@ public class SearchTool : ITool
     private static string Truncate(string line, int maxLength = 500)
     {
         return line.Length <= maxLength ? line : line[..maxLength] + "...";
+    }
+
+    private static async Task<bool> IsBinaryAsync(string file, CancellationToken cancellationToken)
+    {
+        using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var probe = new byte[BinaryProbeBytes];
+        var read = await stream.ReadAsync(probe.AsMemory(0, BinaryProbeBytes), cancellationToken);
+        for (var i = 0; i < read; i++)
+        {
+            if (probe[i] == 0) return true;
+        }
+        return false;
     }
 }

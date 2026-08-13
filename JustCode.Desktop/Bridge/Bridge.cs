@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using JustCode.Infrastructure;
 using JustCode.Services;
+using JustCode.Tools;
 
 namespace JustCode.Bridge;
 
@@ -11,18 +13,24 @@ internal sealed class Bridge
     private const int MaxToolOutputChars = 4000;
 
     private readonly NativeWebView _webView;
-    private readonly LlmProviderService _llmProvider;
+    private readonly List<ITool> _tools;
     private readonly SessionService _sessions;
     private readonly AppDataService _appData;
+    private readonly ApiConfigService _apiConfigs;
+    private readonly ProjectService _projects;
+    private readonly PermissionService _permissions;
     private LocalServer? _server;
     private CancellationTokenSource? _activeStreamCts;
 
-    public Bridge(NativeWebView webView, LlmProviderService llmProvider, SessionService sessions, AppDataService appData)
+    public Bridge(NativeWebView webView, List<ITool> tools, SessionService sessions, AppDataService appData, ApiConfigService apiConfigs, ProjectService projects)
     {
         _webView = webView;
-        _llmProvider = llmProvider;
+        _tools = tools;
         _sessions = sessions;
         _appData = appData;
+        _apiConfigs = apiConfigs;
+        _projects = projects;
+        _permissions = new PermissionService(Post);
     }
 
     public void Initialize(bool useDevServer)
@@ -106,6 +114,65 @@ internal sealed class Bridge
             case "list_sessions":
                 return _sessions.List();
 
+            case "list_api_configs":
+                return _apiConfigs.List();
+
+            case "get_active_api_config":
+                return _apiConfigs.ActiveId;
+
+            case "save_api_config":
+            {
+                var config = JsonSerializer.Deserialize<ApiConfig>(args.GetProperty("config").GetRawText(), Json.Options)
+                    ?? throw new InvalidOperationException("Invalid API config payload");
+                _apiConfigs.Upsert(config);
+                return _apiConfigs.List();
+            }
+
+            case "delete_api_config":
+            {
+                var configId = args.GetProperty("id").GetString() ?? string.Empty;
+                _apiConfigs.Delete(configId);
+                return _apiConfigs.List();
+            }
+
+            case "set_active_api_config":
+            {
+                var configId = args.GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(configId)) _apiConfigs.SetActive(configId);
+                return _apiConfigs.ActiveId;
+            }
+
+            case "list_projects":
+                return _projects.List();
+
+            case "pick_folder":
+                return await PickFolderAsync();
+
+            case "get_active_project":
+                return _projects.ActiveId;
+
+            case "save_project":
+            {
+                var project = JsonSerializer.Deserialize<Project>(args.GetProperty("project").GetRawText(), Json.Options)
+                    ?? throw new InvalidOperationException("Invalid project payload");
+                _projects.Save(project);
+                return _projects.List();
+            }
+
+            case "delete_project":
+            {
+                var projectId = args.GetProperty("id").GetString() ?? string.Empty;
+                _projects.Delete(projectId);
+                return _projects.List();
+            }
+
+            case "set_active_project":
+            {
+                var projectId = args.GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(projectId)) _projects.SetActive(projectId);
+                return _projects.ActiveId;
+            }
+
             case "load_session":
                 return _sessions.Load(args.GetProperty("id").GetString() ?? string.Empty);
 
@@ -123,24 +190,29 @@ internal sealed class Bridge
 
             case "chat_stream":
             {
-                var history = args.GetProperty("history").EnumerateArray()
-                    .Select(el => new ChatTurn(
-                        el.GetProperty("role").GetString() ?? "user",
-                        el.GetProperty("text").GetString() ?? string.Empty))
-                    .ToList();
+                var history = ParseHistory(args);
                 var prompt = args.GetProperty("prompt").GetString() ?? string.Empty;
                 var thinking = args.GetProperty("thinking").GetString() ?? "default";
+                var configId = args.TryGetProperty("configId", out var configProp)
+                    ? configProp.GetString()
+                    : null;
+                var projectId = args.TryGetProperty("projectId", out var projectProp)
+                    ? projectProp.GetString()
+                    : null;
 
-                _llmProvider.ThinkingEffort = thinking;
+                if (!string.IsNullOrWhiteSpace(projectId)) _projects.SetActive(projectId);
+
+                var provider = ResolveProvider(configId);
+                provider.ThinkingEffort = thinking;
 
                 using var cts = new CancellationTokenSource();
                 _activeStreamCts = cts;
                 try
                 {
-                    await foreach (var chunk in _llmProvider.ChatStreamAsync(
+                    await foreach (var chunk in provider.ChatStreamAsync(
                         history,
                         prompt,
-                        onReasoningDelta: null,
+                        onReasoningDelta: d => Post(new { kind = "reasoning_chunk", id, data = d }),
                         onToolStatus: s => Post(new { kind = "tool_status", id, data = CapToolOutput(s) }),
                         cts.Token))
                     {
@@ -164,9 +236,89 @@ internal sealed class Bridge
                 _activeStreamCts?.Cancel();
                 return true;
 
+            case "set_yolo_mode":
+            {
+                var enabled = args.GetProperty("enabled").GetBoolean();
+                _permissions.ApproveAll = enabled;
+                return true;
+            }
+
+            case "respond_tool_approval":
+            {
+                var approvalId = args.GetProperty("id").GetInt32();
+                var approved = args.GetProperty("approved").GetBoolean();
+                _permissions.Respond(approvalId, approved);
+                return true;
+            }
+
             default:
                 throw new InvalidOperationException($"Unknown command: {cmd}");
         }
+    }
+
+    private async Task<string?> PickFolderAsync()
+    {
+        var topLevel = TopLevel.GetTopLevel(_webView);
+        if (topLevel is null)
+        {
+            throw new InvalidOperationException("No active window for the folder picker.");
+        }
+
+        return await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Select project folder",
+                AllowMultiple = false,
+            });
+
+            return folders.Count > 0 ? folders[0].Path.LocalPath : null;
+        });
+    }
+
+    private static List<ChatTurn> ParseHistory(JsonElement args)
+    {
+        if (!args.TryGetProperty("history", out var history) || history.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return history.EnumerateArray()
+            .Select(el => new ChatTurn(
+                el.TryGetProperty("role", out var roleProp) ? roleProp.GetString() ?? "user" : "user",
+                el.TryGetProperty("text", out var textProp) ? textProp.GetString() ?? string.Empty : string.Empty,
+                Blocks: el.TryGetProperty("blocks", out var blocksProp) && blocksProp.ValueKind == JsonValueKind.Array
+                    ? blocksProp.EnumerateArray().ToList()
+                    : null))
+            .ToList();
+    }
+
+    private LlmProviderService ResolveProvider(string? configId)
+    {
+        var config = _apiConfigs.Get(configId);
+        if (config is null)
+            throw new InvalidOperationException(
+                "No API configuration selected. Open Settings and add an API config first.");
+
+        return new OpenAIService(new OpenAiConfig
+        {
+            BaseUrl = config.BaseUrl,
+            ApiKey = config.ApiKey,
+            Model = config.Model,
+            StrictMode = config.StrictMode,
+            EnableThinking = config.EnableThinking,
+            MaxContextTokens = config.MaxContextTokens,
+            SystemPrompt = BuildSystemPrompt()
+        }, _tools, _permissions);
+    }
+
+    private string BuildSystemPrompt()
+    {
+        var projectName = _projects.ActiveProject?.Name;
+        if (string.IsNullOrWhiteSpace(projectName))
+            projectName = "Unnamed project";
+
+        return $"Project: {projectName}\nWorkspace root: {_projects.Root}\n" +
+               "You are JustCode, an AI coding assistant. All file and command operations are scoped to the workspace root. " +
+               "Prefer the provided tools over guessing file contents.";
     }
 
     private static ToolStatus CapToolOutput(ToolStatus status)
@@ -178,7 +330,7 @@ internal sealed class Bridge
             status.Name,
             status.Arguments,
             status.State,
-            status.Output[..MaxToolOutputChars] + "\n\n...(output truncated)");
+            OutputTruncator.Tail(status.Output, MaxToolOutputChars));
     }
 
     private void Post(object payload)

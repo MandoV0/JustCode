@@ -1,16 +1,18 @@
 using System.Text.Json;
 using JustCode.Infrastructure;
+using JustCode.Tools;
 
 namespace JustCode.Services;
 
-public sealed record ChatTurn(string Role, string Text, string? Reasoning = null);
+public sealed record ChatTurn(string Role, string Text, string? Reasoning = null, List<JsonElement>? Blocks = null);
 
 public sealed record ToolStatus(string Name, string Arguments, string State, string? Output = null);
 
-public abstract class LlmProviderService(List<ITool> tools)
+public abstract class LlmProviderService(List<ITool> tools, PermissionService? permissions = null)
 {
     protected static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(120) };
     protected readonly Dictionary<string, ITool> Tools = tools.ToDictionary(t => t.Name);
+    protected readonly PermissionService? Permissions = permissions;
 
     public string? ThinkingEffort { get; set; }
 
@@ -39,9 +41,16 @@ public abstract class LlmProviderService(List<ITool> tools)
         if (!Tools.TryGetValue(name, out var tool))
             return ToolResult.Error($"Unknown tool: {name}").Output;
 
+        if (tool.RequiresApproval && Permissions is not null)
+        {
+            var approved = await Permissions.RequestAsync(name, arguments, ct);
+            if (!approved)
+                return ToolResult.Error($"User denied approval for tool '{name}'.").Output;
+        }
+
         DebugLog.Write($"[{GetType().Name}] Executing tool: {name}");
         var argsElement = JsonSerializer.Deserialize<JsonElement>(arguments, Json.Options);
-        
+
         return (await tool.ExecuteAsync(argsElement, ct)).Output;
     }
 }

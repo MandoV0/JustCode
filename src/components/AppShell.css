@@ -2,6 +2,27 @@
   box-sizing: border-box;
 }
 
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
 html,
 body,
 #root {
@@ -92,4 +113,133 @@ body {
   border-top: 1px solid var(--border);
   padding: var(--space-2);
   min-height: var(--composer-height);
+}
+
+.approval-backdrop {
+  position: fixed;
+  inset: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(0, 0, 0, 0.6);
+
+  z-index: 100;
+}
+
+.approval-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+
+  width: min(480px, calc(100vw - 48px));
+  max-height: min(560px, calc(100vh - 48px));
+
+  overflow: hidden;
+
+  padding: var(--space-3);
+
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+}
+
+.approval-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.approval-tool {
+  align-self: flex-start;
+
+  padding: 4px 10px;
+
+  border-radius: var(--radius-full);
+
+  background: var(--accent-soft);
+  color: var(--accent);
+
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.approval-args {
+  margin: 0;
+
+  padding: var(--space-2);
+
+  background: var(--code-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  color: var(--text-0);
+
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.approval-hint {
+  margin: 0;
+
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.approval-deny,
+.approval-approve {
+  height: var(--button-height-md);
+
+  padding: 0 var(--space-3);
+
+  border-radius: var(--radius-m);
+
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.approval-deny {
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+
+.approval-deny:hover {
+  background: var(--bg-4);
+  color: var(--text-0);
+}
+
+.approval-approve {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+}
+
+.approval-approve:hover {
+  background: var(--accent-hover);
 }

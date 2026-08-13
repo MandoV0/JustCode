@@ -1,11 +1,18 @@
 using System.Text.Json;
+using JustCode.Services;
 
 namespace JustCode.Tools;
 
 public class EditFileTool : ITool
 {
+    private readonly ProjectService _project;
+
+    public EditFileTool(ProjectService project) => _project = project;
+
     public string Name => "edit";
     public string Description => "Makes a precise text replacement in a file. old_string must match exactly (and uniquely, unless replace_all is set).";
+
+    public bool RequiresApproval => true;
 
     public object ParameterSchema => new
     {
@@ -22,33 +29,35 @@ public class EditFileTool : ITool
 
     public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
-        var path = arguments.GetProperty("path").GetString()!;
-        var oldString = arguments.GetProperty("old_string").GetString()!;
-        var newString = arguments.GetProperty("new_string").GetString()!;
-        var replaceAll = arguments.TryGetProperty("replace_all", out var raEl) && raEl.GetBoolean();
+        var path        =   arguments.GetProperty("path").GetString()!;
+        var oldString   =   arguments.GetProperty("old_string").GetString()!;
+        var newString   =   arguments.GetProperty("new_string").GetString()!;
+        var replaceAll  =   arguments.TryGetProperty("replace_all", out var raEl) && raEl.GetBoolean();
 
         if (oldString.Length == 0)
         {
             return ToolResult.Error("old_string must not be empty. Use the write tool to create new files.");
         }
 
-        if (!ToolHelpers.TryResolvePath(path, out var full, out var error, checkExists: true))
+        if (!_project.TryResolvePath(path, out var full, out var error, checkExists: true))
         {
-            return error!;
+            return ToolResult.Error(error ?? "Path resolution failed.");
         }
 
-        string original;
+        using var fileLock = await ToolHelpers.LockFileAsync(full, cancellationToken);
+
+        TextFileContent file;
         try
         {
-            original = await File.ReadAllTextAsync(full, cancellationToken);
+            file = await TextFileHelper.ReadAsync(full, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return ToolResult.Error($"Failed to read file: {ex.Message}");
         }
 
-        var lineEnding = original.Contains('\r') ? "\r\n" : "\n";
-        var normalizedOriginal = original.Replace("\r\n", "\n");
+        var lineEnding = file.LineEnding;
+        var normalizedOriginal = file.Text.Replace("\r\n", "\n");
         var normalizedOld = oldString.Replace("\r\n", "\n");
         var normalizedNew = newString.Replace("\r\n", "\n");
 
@@ -68,14 +77,11 @@ public class EditFileTool : ITool
             ? normalizedOriginal.Replace(normalizedOld, normalizedNew)
             : ReplaceFirst(normalizedOriginal, normalizedOld, normalizedNew);
 
-        if (lineEnding == "\r\n")
-        {
-            updated = updated.Replace("\n", "\r\n");
-        }
+        updated = TextFileHelper.ConvertLineEndings(updated, lineEnding);
 
         try
         {
-            await File.WriteAllTextAsync(full, updated, cancellationToken);
+            await TextFileHelper.WriteAsync(full, updated, file.HasUtf8Bom, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

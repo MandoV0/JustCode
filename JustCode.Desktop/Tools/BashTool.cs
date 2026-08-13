@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using JustCode.Services;
 
 namespace JustCode.Tools;
 
@@ -10,8 +12,34 @@ namespace JustCode.Tools;
 /// </summary>
 public class BashTool : ITool
 {
+    private static readonly (Regex Pattern, string Reason)[] DenyPatterns =
+    [
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+/(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the filesystem root"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+/\*", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the filesystem root"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+--no-preserve-root(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm with --no-preserve-root"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+~(/|\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the home directory"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+%userprofile%(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the user profile"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+\$home(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the home directory"),
+        (new Regex(@"rm\s+-[^\s]*r[^\s]*\s+\$env:userprofile(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive rm targeting the user profile"),
+        (new Regex(@"\brd\s+(/[^\s]*[sq][^\s]*)\s+(/[^\s]*[sq][^\s]*)\s+[a-zA-Z]:\\(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive deletion of a drive root"),
+        (new Regex(@"\bdel\s+(/[^\s]*[sq][^\s]*)\s+(/[^\s]*[sq][^\s]*)\s+[a-zA-Z]:\\(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "recursive deletion of a drive root"),
+        (new Regex(@"\bformat\s+[a-zA-Z]:(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "formatting a drive"),
+        (new Regex(@"(^|[;&|])\s*deltree(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "deltree recursive deletion"),
+        (new Regex(@"(^|[;&|])\s*diskpart(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "diskpart disk management"),
+        (new Regex(@"(^|[;&|])\s*(shutdown|reboot|restart)(\s|$|[;&|])", RegexOptions.IgnoreCase | RegexOptions.Compiled), "system shutdown or reboot"),
+        (new Regex(@"\bdd\s+if=/dev/zero\s+of=/dev/", RegexOptions.IgnoreCase | RegexOptions.Compiled), "dd zeroing a device"),
+        (new Regex(@"\bmkfs\.[a-z0-9_]+\s+/dev/", RegexOptions.IgnoreCase | RegexOptions.Compiled), "mkfs formatting a device"),
+        (new Regex(@":\s*\(\s*\)\s*\{", RegexOptions.Compiled), "fork bomb")
+    ];
+
+    private readonly ProjectService _project;
+
+    public BashTool(ProjectService project) => _project = project;
+
     public string Name => "bash";
     public string Description => "Executes a shell command in the workspace and captures its standard output, standard error, and exit code. Useful for running dotnet builds/tests, git commands, and process automation.";
+
+    public bool RequiresApproval => true;
 
     public object ParameterSchema => new
     {
@@ -37,11 +65,11 @@ public class BashTool : ITool
         var workingDirectory = arguments.TryGetProperty("working_directory", out var wdEl) ? wdEl.GetString() : null;
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
-            workingDirectory = Environment.CurrentDirectory;
+            workingDirectory = _project.Root;
         }
-        else if (!ToolHelpers.TryResolvePath(workingDirectory, out var resolvedWd, out var wdError))
+        else if (!_project.TryResolvePath(workingDirectory, out var resolvedWd, out var wdError))
         {
-            return wdError!;
+            return ToolResult.Error(wdError ?? "Path resolution failed.");
         }
         else
         {
@@ -60,6 +88,12 @@ public class BashTool : ITool
         if (timeoutSeconds > 600) timeoutSeconds = 600;
 
         var captureOutput = !arguments.TryGetProperty("capture_output", out var coEl) || coEl.GetBoolean();
+
+        var denyReason = CheckDenyPatterns(command);
+        if (denyReason is not null)
+        {
+            return ToolResult.Error($"Command blocked by JustCode safety rules: {denyReason}.");
+        }
 
         var (fileName, argumentsText) = BuildShellInvocation(command);
 
@@ -120,6 +154,17 @@ public class BashTool : ITool
         {
             return ToolResult.Error($"Failed to read command output: {ex.Message}");
         }
+    }
+
+    private static string? CheckDenyPatterns(string command)
+    {
+        foreach (var (pattern, reason) in DenyPatterns)
+        {
+            if (pattern.IsMatch(command))
+                return reason;
+        }
+
+        return null;
     }
 
     private static (string FileName, string Arguments) BuildShellInvocation(string command)

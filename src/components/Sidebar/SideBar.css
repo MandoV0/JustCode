@@ -127,10 +127,18 @@
     border-color var(--transition-fast);
 }
 
-.new-chat-btn:hover {
+.new-chat-btn:hover:not(:disabled) {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.new-chat-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  background: var(--bg-2);
+  border-color: var(--border);
+  color: var(--text-2);
 }
 
 .new-chat-btn img {
@@ -157,34 +165,57 @@
   border-color: rgba(255, 255, 255, 0.3);
 }
 
-/* ----------------------------------- Section ----------------------------------- */
+/* ----------------------------------- Project Tree ----------------------------------- */
 
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-
+.sidebar-scroll {
   flex: 1;
-  min-height: 0; /* Important for scrolling */
-}
-
-.sidebar-title {
-  color: var(--text-2);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 0 4px;
-}
-
-.chat-list {
-  display: flex;
-  flex-direction: column;
-
-  gap: 2px;
-
-  margin-top: var(--space-1);
+  min-height: 0;
 
   overflow-y: auto;
+
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.new-project-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+
+  width: 100%;
+
+  padding: 8px 12px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+
+  background: var(--bg-2);
+  color: var(--text-1);
+
+  font-size: var(--text-sm);
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.new-project-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.new-project-btn img {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  display: block;
 }
 
 /* --------------------------------- Chat items --------------------------------- */
@@ -357,3 +388,191 @@
   filter: brightness(0) saturate(100%) invert(95%) sepia(4%) saturate(400%)
     hue-rotate(180deg);
 }
+
+/* ----------------------------------- Project Nodes ----------------------------------- */
+
+.project-node {
+  border-radius: var(--radius-m);
+}
+
+.project-node.active {
+  background: var(--bg-2);
+}
+
+.project-node-header {
+  display: flex;
+  align-items: center;
+
+  border-radius: var(--radius-m);
+}
+
+.project-chevron {
+  width: 20px;
+  height: 24px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  color: var(--text-2);
+
+  font-size: 10px;
+
+  cursor: pointer;
+
+  user-select: none;
+
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+
+.project-chevron:hover {
+  color: var(--text-0);
+}
+
+.project-chevron.open {
+  transform: rotate(90deg);
+}
+
+.project-select {
+  flex: 1;
+  min-width: 0;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  height: 28px;
+
+  padding: 0 8px 0 0;
+
+  border: none;
+  background: transparent;
+
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+
+  color: var(--text-1);
+
+  cursor: pointer;
+
+  text-align: left;
+}
+
+.project-select:hover {
+  color: var(--text-0);
+}
+
+.project-node.active .project-select {
+  color: var(--accent);
+}
+
+.project-icon {
+  width: 15px;
+  height: 15px;
+
+  flex-shrink: 0;
+}
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-count {
+  font-size: var(--text-xs);
+  font-weight: 500;
+
+  color: var(--text-2);
+
+  flex-shrink: 0;
+}
+
+.project-actions {
+  display: none;
+  align-items: center;
+
+  gap: 2px;
+
+  margin-right: 6px;
+
+  flex-shrink: 0;
+}
+
+.project-node-header:hover .project-actions {
+  display: flex;
+}
+
+.project-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 22px;
+  height: 22px;
+
+  border-radius: var(--radius-s);
+
+  color: var(--text-2);
+
+  cursor: pointer;
+}
+
+.project-action img {
+  width: 14px;
+  height: 14px;
+
+  filter: brightness(0) saturate(100%) invert(62%) sepia(6%) saturate(200%)
+    hue-rotate(170deg);
+
+  transition: filter var(--transition-fast);
+}
+
+.project-action:hover {
+  background: var(--bg-3);
+}
+
+.project-action:hover img {
+  filter: brightness(0) saturate(100%) invert(95%) sepia(4%) saturate(400%)
+    hue-rotate(180deg);
+}
+
+.project-action-danger:hover {
+  background: var(--red-soft);
+}
+
+.project-action-danger:hover img {
+  filter: brightness(0) saturate(100%) invert(39%) sepia(88%) saturate(2500%)
+    hue-rotate(335deg);
+}
+
+.project-chats {
+  display: flex;
+  flex-direction: column;
+
+  gap: 1px;
+
+  margin: 2px 0 4px;
+  padding-left: 12px;
+
+  border-left: 1px solid var(--border);
+}
+
+.project-chats .chat-item {
+  padding: 6px 8px 6px 10px;
+}
+
+.project-no-chats {
+  padding: 4px 10px;
+
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* ----------------------------------- Footer ----------------------------------- */

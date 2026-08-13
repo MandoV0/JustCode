@@ -1,9 +1,14 @@
 using System.Text.Json;
+using JustCode.Services;
 
 namespace JustCode.Tools;
 
 public class ListDirTool : ITool
 {
+    private readonly ProjectService _project;
+
+    public ListDirTool(ProjectService project) => _project = project;
+
     public string Name => "list_dir";
 
     public string Description => "Lists the content of a directory.";
@@ -25,9 +30,9 @@ public class ListDirTool : ITool
     public async Task<ToolResult> ExecuteAsync(JsonElement arguments, CancellationToken cancellationToken)
     {
         var path = arguments.GetProperty("path").GetString()!;
-        if (!ToolHelpers.TryResolvePath(path, out var full, out var error))
+        if (!_project.TryResolvePath(path, out var full, out var error))
         {
-            return error!;
+            return ToolResult.Error(error ?? "Path resolution failed.");
         }
 
         if (!Directory.Exists(full))

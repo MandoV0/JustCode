@@ -3,12 +3,13 @@ using JustCode.Infrastructure;
 
 namespace JustCode.Services;
 
-internal sealed record SessionMessage(string Id, string Role, string Text);
+internal sealed record SessionMessage(string Id, string Role, string Text, JsonElement? Blocks = null);
 
 internal sealed class Session
 {
     public string Id { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public long CreatedAt { get; set; }
     public long UpdatedAt { get; set; }
     public List<SessionMessage> Messages { get; set; } = [];
@@ -18,6 +19,7 @@ internal sealed class SessionSummary
 {
     public string Id { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public long UpdatedAt { get; set; }
     public int MessageCount { get; set; }
 }
@@ -44,6 +46,7 @@ internal sealed class SessionService
                     {
                         Id = s.Id,
                         Title = s.Title,
+                        ProjectId = s.ProjectId,
                         UpdatedAt = s.UpdatedAt,
                         MessageCount = s.Messages.Count,
                     };
