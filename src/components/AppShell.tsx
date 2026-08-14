@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { Plus, Sparkles } from "lucide-react";
 import { invoke, setToolApprovalHandler, type ApprovalRequest, type SessionSummary } from "../bridge";
 import { getActiveApiConfigId, listApiConfigs, setActiveApiConfig, type ApiConfig } from "../apiConfigs";
 import { getToolAutoExtend, setToolAutoExtend, getYoloMode, setYoloMode } from "../settings";
-import { deleteProject, listProjects, saveProject, type ApiProject } from "../projects";
+import {
+    deleteProject,
+    listProjects,
+    saveProject,
+    setActiveProject,
+    type ApiProject,
+} from "../projects";
 import { estimateMessagesTokens } from "../tokenEstimate";
 import { toSessionMessage, type ChatMessage } from "../messages";
 import { useTabs } from "../hooks/useTabs";
@@ -10,11 +17,10 @@ import { useToasts } from "../hooks/useToasts";
 import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import "../styles/tokens.css";
 import "./AppShell.css";
+import TabBar from "./TabBar";
+import Sidebar from "./Sidebar";
 import Composer from "./Composer/Composer";
 import ChatView from "./ChatView/ChatView";
-import TabBar from "./TabBar";
-import ProjectsPanel from "./ProjectsPanel";
-import ErrorBoundary from "./ErrorBoundary";
 import SettingsModal from "./Settings/Settings";
 import ApprovalModal from "./Approval/ApprovalModal";
 import Toasts from "./Toasts";
@@ -31,6 +37,7 @@ export default function AppShell() {
     const [yoloMode, setYoloModeState] = useState<boolean>(getYoloMode);
     const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
     const [projects, setProjects] = useState<ApiProject[]>([]);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
 
     const refreshSessions = useCallback(async () => {
         try {
@@ -74,7 +81,6 @@ export default function AppShell() {
         activeTabId,
         projectsOpen,
         setActiveTabId,
-        setProjectsOpen,
         updateTab,
         updateAllTabs,
         ensureInitialTab,
@@ -89,6 +95,7 @@ export default function AppShell() {
         handleStop,
     } = useTabs({ persistSession, refreshSessions, toast, confirmAction });
 
+    const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
     const activeConfig = configs.find((c) => c.id === activeConfigId) ?? null;
     const maxContextTokens = activeConfig?.maxContextTokens ?? 64_000;
 
@@ -96,6 +103,7 @@ export default function AppShell() {
         refreshSessions();
         refreshConfigs();
         refreshProjects();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -103,9 +111,31 @@ export default function AppShell() {
     }, []);
 
     useEffect(() => {
-        setToolApprovalHandler((req) => setPendingApproval(req));
+        setToolApprovalHandler((req) => {
+            setPendingApproval((prev) => (req.expired ? (prev?.id === req.id ? null : prev) : req));
+        });
         return () => setToolApprovalHandler(null);
     }, []);
+
+    useEffect(() => {
+        function onKeyDown(e: KeyboardEvent) {
+            const mod = e.metaKey || e.ctrlKey;
+            if (!mod) return;
+            const key = e.key.toLowerCase();
+            if (key === "n") {
+                e.preventDefault();
+                handleNewTab();
+            } else if (key === "k") {
+                e.preventDefault();
+                window.dispatchEvent(new CustomEvent("justcode:focus-composer"));
+            } else if (key === "b") {
+                e.preventDefault();
+                setSidebarOpen((v) => !v);
+            }
+        }
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [handleNewTab]);
 
     async function refreshProjects() {
         try {
@@ -152,7 +182,19 @@ export default function AppShell() {
                     toast(`Failed to delete project: ${String(err)}`, "error");
                 }
             },
+            true,
         );
+    }
+
+    async function handleSelectProject(id: string | null) {
+        try {
+            if (id) await setActiveProject(id);
+            if (activeTabId) {
+                updateTab(activeTabId, (t) => ({ ...t, projectId: id }));
+            }
+        } catch (err) {
+            console.error("set_active_project failed", err);
+        }
     }
 
     async function handleSelectConfig(id: string) {
@@ -190,82 +232,122 @@ export default function AppShell() {
         ? tabs.find((t) => t.id === pendingApproval.agentId)?.title
         : undefined;
 
+    const showPanel = !projectsOpen && activeTab !== null;
+
     return (
         <div className="app-shell">
             <TabBar
-                tabs={tabs.map((t) => ({ id: t.id, title: t.title, isLoading: t.isLoading, lastStatus: t.lastStatus }))}
-                activeTabId={projectsOpen ? null : activeTabId}
-                projectsOpen={projectsOpen}
-                onSelectProjects={() => setProjectsOpen(true)}
-                onSelectTab={(id) => {
-                    setActiveTabId(id);
-                    setProjectsOpen(false);
-                }}
-                onCloseTab={handleCloseTab}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
                 onNewTab={() => handleNewTab()}
                 onOpenSettings={() => setSettingsOpen(true)}
             />
 
-            <div className="tab-panels">
-                {projectsOpen && (
-                    <div className="tab-panel active">
-                        <ErrorBoundary>
-                            <ProjectsPanel
-                                projects={projects}
-                                sessions={sessions}
-                                onOpenSession={handleOpenSession}
-                                onDeleteSession={handleDeleteSession}
-                                onRenameSession={handleRenameSession}
-                                onNewChat={handleNewTab}
-                                onSaveProject={handleSaveProject}
-                                onDeleteProject={handleDeleteProject}
-                                onToast={toast}
-                            />
-                        </ErrorBoundary>
-                    </div>
+            <div className="app-body">
+                {sidebarOpen && (
+                    <Sidebar
+                        projects={projects}
+                        sessions={sessions}
+                        activeProjectId={activeTab?.projectId ?? null}
+                        activeChatId={activeTabId}
+                        openChats={tabs.map((t) => ({
+                            id: t.id,
+                            sessionId: t.sessionId,
+                            title: t.title,
+                            projectId: t.projectId,
+                            isLoading: t.isLoading,
+                            lastStatus: t.lastStatus,
+                        }))}
+                        onSelectChat={(id) => {
+                            setActiveTabId(id);
+                        }}
+                        onCloseChat={handleCloseTab}
+                        onOpenSession={handleOpenSession}
+                        onDeleteSession={handleDeleteSession}
+                        onRenameSession={handleRenameSession}
+                        onNewChat={handleNewTab}
+                        onSaveProject={handleSaveProject}
+                        onDeleteProject={handleDeleteProject}
+                        onSelectProject={handleSelectProject}
+                        onToast={toast}
+                    />
                 )}
 
-                {tabs.map((tab) => {
-                    const isActive = !projectsOpen && tab.id === activeTabId;
-                    const projectName = projects.find((p) => p.id === tab.projectId)?.name ?? null;
-                    const tokenUsage = {
-                        used: estimateMessagesTokens(tab.messages),
-                        max: maxContextTokens,
-                    };
+                <div className="workspace">
+                    {!showPanel ? (
+                        <div className="workspace-hero">
+                            <div className="workspace-hero-icon">
+                                <Sparkles size={40} strokeWidth={1.2} />
+                            </div>
+                            <h1 className="workspace-hero-title">What should we get done?</h1>
+                            <p className="workspace-hero-sub">Pick a project, then start working.</p>
+                            <button className="workspace-hero-btn" onClick={() => handleNewTab()}>
+                                <Plus size={16} />
+                                <span>New chat</span>
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="workspace-panel">
+                            <div className="workspace-header">
+                                <div className="workspace-breadcrumb">
+                                    <span className="workspace-breadcrumb-project">
+                                        {activeTab.projectId
+                                            ? (projects.find((p) => p.id === activeTab.projectId)?.name ?? "Project")
+                                            : "No project"}
+                                    </span>
+                                    <span className="workspace-breadcrumb-sep">/</span>
+                                    <span className="workspace-breadcrumb-title">{activeTab.title || "New chat"}</span>
+                                </div>
+                            </div>
 
-                    return (
-                        <div key={tab.id} className={`tab-panel${isActive ? " active" : ""}`}>
-                            <ErrorBoundary>
+                            <div className="workspace-body">
                                 <ChatView
-                                    messages={tab.messages}
-                                    isLoading={tab.isLoading}
-                                    error={tab.error}
+                                    messages={activeTab.messages}
+                                    isLoading={activeTab.isLoading}
+                                    error={activeTab.error}
                                     toolAutoExtend={toolAutoExtend}
                                     hasConfigs={configs.length > 0}
                                     hasProjects={projects.length > 0}
-                                    onCreateProject={() => setProjectsOpen(true)}
+                                    onCreateProject={() => setSidebarOpen(true)}
                                     onOpenSettings={() => setSettingsOpen(true)}
-                                    onSelectPrompt={(text) => updateTab(tab.id, (t) => ({ ...t, draftPrompt: text }))}
-                                    onFork={() => handleForkChat(tab.id)}
-                                    onDeleteMessage={(msgId) => handleDeleteMessage(tab.id, msgId)}
+                                    onSelectPrompt={(text) =>
+                                        updateTab(activeTab.id, (t) => ({ ...t, draftPrompt: text }))
+                                    }
+                                    onFork={() => handleForkChat(activeTab.id)}
+                                    onDeleteMessage={(msgId) => handleDeleteMessage(activeTab.id, msgId)}
                                 />
                                 <Composer
-                                    onSend={(prompt, thinking, configId) => handleSend(tab.id, prompt, thinking, configId)}
-                                    onStop={() => handleStop(tab.id)}
-                                    isStreaming={tab.isLoading}
+                                    isActive={true}
+                                    onSend={(prompt, thinking, configId) =>
+                                        handleSend(activeTab.id, prompt, thinking, configId)
+                                    }
+                                    onStop={() => handleStop(activeTab.id)}
+                                    isStreaming={activeTab.isLoading}
                                     configs={configs}
                                     activeConfigId={activeConfigId}
                                     onSelectConfig={handleSelectConfig}
                                     onOpenSettings={() => setSettingsOpen(true)}
-                                    projectName={projectName}
-                                    tokenUsage={tokenUsage}
-                                    draftPrompt={tab.draftPrompt}
-                                    onDraftChange={(val) => updateTab(tab.id, (t) => ({ ...t, draftPrompt: val }))}
+                                    projectName={
+                                        activeTab.projectId
+                                            ? (projects.find((p) => p.id === activeTab.projectId)?.name ?? null)
+                                            : null
+                                    }
+                                    projects={projects}
+                                    activeProjectId={activeTab.projectId}
+                                    onSelectProject={handleSelectProject}
+                                    approvalEnabled={!yoloMode}
+                                    onApprovalChange={(v) => handleYoloChange(!v)}
+                                    tokenUsage={{
+                                        used: estimateMessagesTokens(activeTab.messages),
+                                        max: maxContextTokens,
+                                    }}
+                                    draftPrompt={activeTab.draftPrompt}
+                                    onDraftChange={(val) => updateTab(activeTab.id, (t) => ({ ...t, draftPrompt: val }))}
                                 />
-                            </ErrorBoundary>
+                            </div>
                         </div>
-                    );
-                })}
+                    )}
+                </div>
             </div>
 
             <SettingsModal

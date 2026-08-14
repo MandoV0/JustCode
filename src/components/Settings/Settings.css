@@ -15,13 +15,13 @@
   display: flex;
   flex-direction: column;
 
-  width: min(560px, calc(100vw - 48px));
-  max-height: min(600px, calc(100vh - 48px));
+  width: min(600px, calc(100vw - 48px));
+  max-height: min(620px, calc(100vh - 48px));
 
   overflow: hidden;
 
   background: var(--bg-1);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-card);
 }
@@ -220,8 +220,8 @@
 }
 
 .settings-inline-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   opacity: 0.85;
 }
@@ -298,8 +298,8 @@
 }
 
 .settings-action-btn img {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 .settings-form {
@@ -310,6 +310,20 @@
   overflow-y: auto;
 
   padding: var(--space-3);
+}
+
+.settings-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin-bottom: var(--space-1);
+}
+
+.settings-form-title {
+  color: var(--text-0);
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 
 .settings-field {
@@ -368,7 +382,7 @@
 }
 
 .settings-checkbox input {
-  accent-color: var(--accent);
+  accent-color: var(--purple);
   cursor: pointer;
 }
 
@@ -410,8 +424,8 @@
 
 .settings-save {
   border: none;
-  background: var(--accent);
-  color: #fff;
+  background: var(--text-0);
+  color: var(--bg-0);
 }
 
 .settings-save:hover:not(:disabled) {

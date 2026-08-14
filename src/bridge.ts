@@ -42,6 +42,7 @@ export interface ApprovalRequest {
     name: string;
     arguments: string;
     agentId?: string;
+    expired?: boolean;
 }
 
 export interface InvokeOptions {
@@ -56,6 +57,7 @@ export interface SessionMessage {
     role: string;
     text: string;
     blocks?: MessageBlock[];
+    interrupted?: boolean;
 }
 
 export interface SessionSummary {

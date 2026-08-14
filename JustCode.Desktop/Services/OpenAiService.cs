@@ -36,6 +36,7 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
     : LlmProviderService(tools, permissions)
 {
     private const int MaxToolRounds = 32;
+    private const int MaxRetries = 3;
 
     public override IAsyncEnumerable<string> ChatStreamAsync(
         List<ChatTurn>? history,
@@ -117,11 +118,7 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
                     requestBody["reasoning_effort"] = ThinkingEffort;
             }
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, config.NormalizedUrl);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
-            req.Content = new StringContent(JsonSerializer.Serialize(requestBody, Json.Options), Encoding.UTF8, "application/json");
-
-            using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var res = await SendWithRetryAsync(requestBody, cancellationToken);
             res.EnsureSuccessStatusCode();
 
             using var stream = await res.Content.ReadAsStreamAsync(cancellationToken);
@@ -218,7 +215,43 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
             messages.AddRange(toolResults);
         }
 
-        throw new InvalidOperationException($"OpenAI/DeepSeek tool call loop exceeded {MaxToolRounds} rounds without a final response.");
+        // Graceful stop instead of throwing when the tool loop runs away.
+        const string loopLimitMessage =
+            "\n\n[Stopped: the agent exceeded the maximum number of tool rounds without a final response. " +
+            "Ask it to continue, or narrow the task.]";
+        yield return loopLimitMessage;
+    }
+
+    private async Task<HttpResponseMessage> SendWithRetryAsync(
+        Dictionary<string, object?> requestBody,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, config.NormalizedUrl);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(requestBody, Json.Options),
+                Encoding.UTF8,
+                "application/json");
+
+            var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            var status = (int)res.StatusCode;
+            var retryable = status == 408 || status == 429 || (status >= 500 && status <= 599);
+            if (!retryable || attempt >= MaxRetries)
+                return res;
+
+            var delayMs = Math.Min(15_000, 800 * (1 << attempt));
+            if (res.Headers.RetryAfter?.Delta is { } delta && delta.TotalMilliseconds > 0)
+                delayMs = Math.Min(15_000, (int)delta.TotalMilliseconds);
+            else if (res.Headers.RetryAfter?.Date is { } date)
+                delayMs = Math.Min(15_000, Math.Max(0, (int)(date - DateTimeOffset.UtcNow).TotalMilliseconds));
+
+            DebugLog.Write($"[OpenAIService] HTTP {status}; retrying in {delayMs}ms (attempt {attempt + 1}/{MaxRetries})");
+            res.Dispose();
+            await Task.Delay(delayMs, cancellationToken);
+        }
     }
 
     private List<ChatTurn>? TrimHistory(List<ChatTurn>? history, string prompt)
@@ -276,6 +309,19 @@ public sealed class OpenAIService(OpenAiConfig config, List<ITool> tools, Permis
             {
                 role = "user",
                 content = (object?)t.Text,
+                tool_calls = (object?)null,
+                tool_call_id = (string?)null
+            });
+            return;
+        }
+
+        // A stopped/interrupted reply is partial — never replay it as a complete assistant turn.
+        if (t.Interrupted)
+        {
+            messages.Add(new
+            {
+                role = "assistant",
+                content = (object?)null,
                 tool_calls = (object?)null,
                 tool_call_id = (string?)null
             });

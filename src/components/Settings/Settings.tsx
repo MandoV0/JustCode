@@ -23,7 +23,7 @@ interface SettingsModalProps {
     onToolAutoExtendChange: (value: boolean) => void;
     yoloMode: boolean;
     onYoloChange: (value: boolean) => void;
-    askConfirm: (title: string, message: string, onConfirm: () => void) => void;
+    askConfirm: (title: string, message: string, onConfirm: () => void, danger?: boolean) => void;
     onToast: (message: string, type?: "info" | "success" | "error") => void;
 }
 
@@ -120,7 +120,7 @@ export default function SettingsModal({ open, onClose, configs, activeConfigId, 
                 setError(String(err));
                 onToast(`Failed to delete config: ${String(err)}`, "error");
             }
-        });
+        }, true);
     }
 
     async function handleSetActive(config: ApiConfig) {
@@ -231,6 +231,19 @@ export default function SettingsModal({ open, onClose, configs, activeConfigId, 
                     </div>
                 ) : (
                     <div className="settings-form">
+                        <div className="settings-form-head">
+                            <span className="settings-form-title">
+                                {editing === "new" ? "Add API Config" : "Edit Config"}
+                            </span>
+                            <button
+                                className="settings-close"
+                                onClick={() => setEditing(null)}
+                                title="Back"
+                            >
+                                <img src={cancelIcon} alt="Back" />
+                            </button>
+                        </div>
+
                         <label className="settings-field">
                             <span>Name</span>
                             <input

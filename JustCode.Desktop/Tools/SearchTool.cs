@@ -11,6 +11,14 @@ public class SearchTool : WorkspaceTool
     private const long MaxSearchFileBytes = 10L * 1024 * 1024;
     private const int BinaryProbeBytes = 1024;
 
+    private static readonly HashSet<string> ExcludedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules", ".git", ".hg", ".svn", "bin", "obj", "dist", "build", ".build",
+        "out", "target", "vendor", ".venv", "venv", "__pycache__", ".next", ".nuxt",
+        "coverage", ".cache", ".idea", ".vscode", ".vs", "tmp", "logs", "Pods",
+        ".terraform", "bower_components", "packages"
+    };
+
     public override string Name => "search";
     public override string Description => "Searches file contents for a text pattern or regular expression, returning matching files and lines (grep-style).";
 
@@ -98,6 +106,7 @@ public class SearchTool : WorkspaceTool
                 foreach (var file in Directory.EnumerateFiles(root, filePattern, SearchOption.AllDirectories))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (IsExcluded(root, file)) continue;
                     filesSearched++;
 
                     try
@@ -174,6 +183,17 @@ public class SearchTool : WorkspaceTool
 
             return ToolResult.Ok(output);
         });
+    }
+
+    private static bool IsExcluded(string root, string file)
+    {
+        var relative = Path.GetRelativePath(root, file);
+        foreach (var segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            if (ExcludedDirectoryNames.Contains(segment))
+                return true;
+        }
+        return false;
     }
 
     private static IEnumerable<(string Text, int Number)> EnumerateLines(string content)

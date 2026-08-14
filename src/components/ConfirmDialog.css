@@ -58,14 +58,14 @@
 }
 
 .confirm-ok {
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    color: #fff;
+  background: var(--text-0);
+  border: 1px solid var(--text-0);
+  color: var(--bg-0);
 }
 
 .confirm-ok:hover {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .confirm-ok.danger {

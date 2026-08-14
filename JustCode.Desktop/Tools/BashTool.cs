@@ -65,7 +65,7 @@ public class BashTool : ITool
         var workingDirectory = arguments.TryGetProperty("working_directory", out var wdEl) ? wdEl.GetString() : null;
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
-            workingDirectory = _project.Root;
+            workingDirectory = _project.ResolveRoot();
         }
         else if (!_project.TryResolvePath(workingDirectory, out var resolvedWd, out var wdError))
         {
@@ -95,18 +95,22 @@ public class BashTool : ITool
             return ToolResult.Error($"Command blocked by JustCode safety rules: {denyReason}.");
         }
 
-        var (fileName, argumentsText) = BuildShellInvocation(command);
-
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
-            Arguments = argumentsText,
+            FileName = OperatingSystem.IsWindows()
+                ? (Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe")
+                : "/bin/bash",
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = captureOutput,
             RedirectStandardError = captureOutput,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // ArgumentList quotes each argument correctly, so embedded quotes/newlines in the
+        // command survive (unlike hand-built "-c \"...\"" strings).
+        psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+        psi.ArgumentList.Add(command);
 
         using var process = new Process { StartInfo = psi };
 
@@ -165,17 +169,6 @@ public class BashTool : ITool
         }
 
         return null;
-    }
-
-    private static (string FileName, string Arguments) BuildShellInvocation(string command)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var comspec = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe";
-            return (comspec, $"/c {command}");
-        }
-
-        return ("/bin/bash", $"-c \"{command}\"");
     }
 
     private static string BuildOutput(string command, int exitCode, string stdout, string stderr, bool captureOutput)

@@ -98,7 +98,10 @@ public class ReadFileTool : WorkspaceTool
             }
 
             var lines = text.Split('\n');
-            var totalLines = lines.Length;
+            // A trailing newline produces a phantom empty element; don't count it as a line.
+            var totalLines = text.Length == 0
+                ? 0
+                : Math.Max(0, lines.Length - (text.EndsWith('\n') ? 1 : 0));
             var width = totalLines.ToString().Length;
 
             var builder = new StringBuilder(MaxChars);

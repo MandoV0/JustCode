@@ -19,6 +19,7 @@ export function toChatMessage(message: SessionMessage): ChatMessage {
                   : ("assistant" as const),
         text: message.text,
         blocks: message.blocks ?? undefined,
+        interrupted: message.interrupted ?? false,
     };
 }
 
@@ -28,5 +29,6 @@ export function toSessionMessage(message: ChatMessage): SessionMessage {
         role: message.role,
         text: message.text,
         blocks: message.blocks,
+        interrupted: message.interrupted ?? false,
     };
 }

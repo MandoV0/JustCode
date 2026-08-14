@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { ArrowUp, Hand, Paperclip, Square } from "lucide-react";
 import { type ApiConfig } from "../../apiConfigs";
+import { type ApiProject } from "../../projects";
 import "./Composer.css";
-import sendIcon from "../../assets/send.svg";
-import stopIcon from "../../assets/stop.svg";
 import intelligenceIcon from "../../assets/intelligence.svg";
 import thinkingIcon from "../../assets/thinking.svg";
+import folderOpenIcon from "../../assets/folder_open.svg";
 import CustomSelect from "../CustomSelect";
 import { formatTokens } from "../../tokenEstimate";
 
 interface ComposerProps {
+    isActive?: boolean;
     onSend: (prompt: string, thinking: string, configId: string) => void;
     onStop: () => void;
     isStreaming: boolean;
@@ -17,18 +19,24 @@ interface ComposerProps {
     onSelectConfig: (id: string) => void;
     onOpenSettings: () => void;
     projectName: string | null;
+    projects: ApiProject[];
+    activeProjectId: string | null;
+    onSelectProject: (id: string | null) => void;
+    approvalEnabled: boolean;
+    onApprovalChange: (enabled: boolean) => void;
     tokenUsage?: { used: number; max: number };
     draftPrompt?: string;
     onDraftChange?: (val: string) => void;
 }
 
 const FALLBACK_THINKING_OPTIONS = ["default"];
-const MAX_TEXTAREA_HEIGHT = 240;
+const MAX_TEXTAREA_HEIGHT = 200;
 
 const WARN_RATIO = 0.8;
 const CRITICAL_RATIO = 0.95;
 
 export default function Composer({
+    isActive = false,
     onSend,
     onStop,
     isStreaming,
@@ -37,6 +45,11 @@ export default function Composer({
     onSelectConfig,
     onOpenSettings,
     projectName,
+    projects,
+    activeProjectId,
+    onSelectProject,
+    approvalEnabled,
+    onApprovalChange,
     tokenUsage,
     draftPrompt,
     onDraftChange,
@@ -74,6 +87,15 @@ export default function Composer({
         if (!thinkingOptions.includes(thinking)) setThinking(thinkingOptions[0]);
     }, [activeConfigId, thinkingOptions, thinking]);
 
+    useEffect(() => {
+        if (!isActive) return;
+        function onFocusRequest() {
+            textareaRef.current?.focus();
+        }
+        window.addEventListener("justcode:focus-composer", onFocusRequest);
+        return () => window.removeEventListener("justcode:focus-composer", onFocusRequest);
+    }, [isActive]);
+
     function handleSubmit() {
         const trimmed = prompt.trim();
         if (!trimmed || isStreaming || !activeConfigId) return;
@@ -100,115 +122,137 @@ export default function Composer({
         label: option,
     }));
 
+    const projectSelectOptions = projects.map((p) => ({ value: p.id, label: p.name }));
+
     const usageRatio = tokenUsage && tokenUsage.max > 0 ? tokenUsage.used / tokenUsage.max : 0;
     const usageLevel =
         usageRatio >= CRITICAL_RATIO ? "critical" : usageRatio >= WARN_RATIO ? "warn" : "ok";
     const usagePct = Math.min(100, Math.round(usageRatio * 100));
 
-    return (
-        <div className="composer-box">
-            <div className="composer-status">
-                <img src={intelligenceIcon} alt="" className="composer-status-icon" />
-                <span className="composer-status-label">Model</span>
-                <span className="composer-status-value">
-                    {activeConfig ? activeConfig.name || activeConfig.model : "—"}
-                </span>
-                <span className="composer-status-sep">·</span>
-                <span className="composer-status-label">Project</span>
-                <span className="composer-status-value">{projectName ?? "None"}</span>
+    const placeholder = "Work with JustCode…";
 
-                {tokenUsage && tokenUsage.max > 0 && (
-                    <span className={`composer-tokens ${usageLevel}`}>
-                        <span className="composer-status-sep">·</span>
-                        <span className="composer-status-label">Context</span>
-                        <span className="composer-tokens-bar-wrap" title={`${usagePct}% context token usage`}>
-                            <span className="composer-tokens-bar" style={{ width: `${usagePct}%` }} />
+    return (
+        <div className="composer-wrap">
+            <div className="composer-context-row">
+                <CustomSelect
+                    icon={folderOpenIcon}
+                    value={activeProjectId ?? ""}
+                    onChange={(id) => onSelectProject(id || null)}
+                    options={projectSelectOptions}
+                    placeholder={projectName ?? "Choose project"}
+                    title="Workspace context"
+                    direction="up"
+                />
+                {usageRatio > 0 && (
+                    <span className={`composer-meter ${usageLevel}`} title={`${usagePct}% context token usage`}>
+                        <span className="composer-meter-bar">
+                            <span className="composer-meter-fill" style={{ width: `${usagePct}%` }} />
                         </span>
-                        <span className="composer-tokens-val">
-                            {formatTokens(tokenUsage.used)} / {formatTokens(tokenUsage.max)}
+                        <span className="composer-meter-val">
+                            {formatTokens(tokenUsage?.used ?? 0)} / {formatTokens(tokenUsage?.max ?? 0)}
                         </span>
-                        {usageRatio >= WARN_RATIO && (
-                            <span className="composer-tokens-warning">
-                                {usageRatio >= CRITICAL_RATIO ? "Context full — old messages dropped" : "Context almost full"}
-                            </span>
-                        )}
                     </span>
                 )}
             </div>
 
-            {noConfigs ? (
-                <div className="composer-empty-state">
-                    <span className="composer-empty-text">
-                        Add an API config to start chatting.
-                    </span>
-                    <button className="composer-empty-btn" onClick={onOpenSettings}>
-                        Open Settings
-                    </button>
-                </div>
-            ) : (
-                <textarea
-                    ref={textareaRef}
-                    className="composer-input"
-                    placeholder="Ask anything..."
-                    value={prompt}
-                    onChange={(e) => {
-                        const val = e.currentTarget.value;
-                        setPrompt(val);
-                        onDraftChange?.(val);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    spellCheck={false}
-                />
-            )}
+            <div className="composer-box">
+                {noConfigs ? (
+                    <div className="composer-empty-state">
+                        <span className="composer-empty-text">Add an API config to start working.</span>
+                        <button className="composer-empty-btn" onClick={onOpenSettings}>
+                            Open Settings
+                        </button>
+                    </div>
+                ) : (
+                    <textarea
+                        ref={textareaRef}
+                        className="composer-input"
+                        placeholder={placeholder}
+                        value={prompt}
+                        onChange={(e) => {
+                            const val = e.currentTarget.value;
+                            setPrompt(val);
+                            onDraftChange?.(val);
+                        }}
+                        onKeyDown={handleKeyDown}
+                        spellCheck={false}
+                    />
+                )}
 
-            <div className="composer-actions">
-                {!noConfigs && (
-                    <div className="composer-tools">
-                        <CustomSelect
-                            icon={intelligenceIcon}
-                            value={activeConfigId ?? ""}
-                            onChange={(id) => onSelectConfig(id)}
-                            options={modelSelectOptions}
-                            placeholder="No configs"
-                            title="Model / API config"
-                            direction="up"
-                        />
+                <div className="composer-toolbar">
+                    <div className="composer-toolbar-left">
+                        <button
+                            className="composer-icon-btn"
+                            title="Attach files (coming soon)"
+                            onClick={() => {}}
+                        >
+                            <Paperclip size={16} />
+                        </button>
 
-                        {thinkingOptions.length > 0 && (
-                            <CustomSelect
-                                icon={thinkingIcon}
-                                value={effectiveThinking}
-                                onChange={(val) => setThinking(val)}
-                                options={thinkingSelectOptions}
-                                title="Thinking effort"
-                                direction="up"
-                            />
+                        <button
+                            className={`composer-approval${approvalEnabled ? " enabled" : ""}`}
+                            onClick={() => onApprovalChange(!approvalEnabled)}
+                            title={
+                                approvalEnabled
+                                    ? "The agent will ask before running commands or editing files."
+                                    : "The agent runs freely without asking."
+                            }
+                        >
+                            <Hand size={14} />
+                            <span>Ask for approval</span>
+                            <span className={`composer-approval-switch${approvalEnabled ? " on" : ""}`}>
+                                <span className="composer-approval-knob" />
+                            </span>
+                        </button>
+                    </div>
+
+                    <div className="composer-toolbar-right">
+                        {!noConfigs && (
+                            <>
+                                <CustomSelect
+                                    icon={intelligenceIcon}
+                                    value={activeConfigId ?? ""}
+                                    onChange={(id) => onSelectConfig(id)}
+                                    options={modelSelectOptions}
+                                    placeholder="No configs"
+                                    title="Model / API config"
+                                    direction="up"
+                                />
+
+                                {thinkingOptions.length > 0 && (
+                                    <CustomSelect
+                                        icon={thinkingIcon}
+                                        value={effectiveThinking}
+                                        onChange={(val) => setThinking(val)}
+                                        options={thinkingSelectOptions}
+                                        title="Thinking effort"
+                                        direction="up"
+                                    />
+                                )}
+                            </>
+                        )}
+
+                        {isStreaming ? (
+                            <button
+                                className="composer-send-btn composer-stop-btn"
+                                onClick={onStop}
+                                title="Stop"
+                            >
+                                <Square size={15} fill="currentColor" />
+                            </button>
+                        ) : (
+                            <button
+                                className={`composer-send-btn${prompt.trim() && activeConfigId ? " ready" : ""}`}
+                                onClick={handleSubmit}
+                                disabled={!prompt.trim() || !activeConfigId}
+                                title="Send"
+                            >
+                                <ArrowUp size={18} />
+                            </button>
                         )}
                     </div>
-                )}
-
-                <div className="composer-spacer" />
-
-                {isStreaming ? (
-                    <button
-                        className="composer-send-btn composer-stop-btn"
-                        onClick={onStop}
-                        title="Stop"
-                    >
-                        <img src={stopIcon} alt="Stop" />
-                    </button>
-                ) : (
-                    <button
-                        className="composer-send-btn"
-                        onClick={handleSubmit}
-                        disabled={!prompt.trim() || !activeConfigId}
-                        title="Send"
-                    >
-                        <img src={sendIcon} alt="Send" />
-                    </button>
-                )}
+                </div>
             </div>
         </div>
     );
 }
-

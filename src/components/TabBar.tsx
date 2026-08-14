@@ -1,82 +1,33 @@
-import type { TabStatus } from "../hooks/useTabs";
-import settingsIcon from "../assets/settings.svg";
-import folderIcon from "../assets/folder.svg";
+import { PanelLeft, Plus, Settings } from "lucide-react";
 import "./TabBar.css";
 
 interface TabBarProps {
-    tabs: { id: string; title: string; isLoading: boolean; lastStatus: TabStatus }[];
-    activeTabId: string | null;
-    projectsOpen: boolean;
-    onSelectProjects: () => void;
-    onSelectTab: (id: string) => void;
-    onCloseTab: (id: string) => void;
+    sidebarOpen: boolean;
+    onToggleSidebar: () => void;
     onNewTab: () => void;
     onOpenSettings: () => void;
 }
 
-export default function TabBar({
-    tabs,
-    activeTabId,
-    projectsOpen,
-    onSelectProjects,
-    onSelectTab,
-    onCloseTab,
-    onNewTab,
-    onOpenSettings,
-}: TabBarProps) {
+export default function TabBar({ sidebarOpen, onToggleSidebar, onNewTab, onOpenSettings }: TabBarProps) {
     return (
-        <div className="tab-bar">
+        <div className="window-bar">
+            <div className="window-brand">JustCode</div>
+
+            <div className="window-bar-spacer" />
+
+            <button className="window-bar-btn" onClick={onNewTab} title="New chat">
+                <Plus size={17} />
+            </button>
+
             <button
-                className={`tab tab-projects${projectsOpen ? " active" : ""}`}
-                onClick={onSelectProjects}
-                title="Projects"
+                className={`window-bar-btn${sidebarOpen ? " active" : ""}`}
+                onClick={onToggleSidebar}
+                title="Toggle sidebar"
             >
-                <img className="tab-projects-icon" src={folderIcon} alt="" />
-                <span>Projects</span>
+                <PanelLeft size={17} />
             </button>
-
-            <div className="tab-bar-scroll">
-                {tabs.map((tab) => (
-                    <div
-                        key={tab.id}
-                        className={`tab${!projectsOpen && tab.id === activeTabId ? " active" : ""}`}
-                        onClick={() => onSelectTab(tab.id)}
-                        title={tab.title || "New chat"}
-                    >
-                        <span className="tab-status-wrap">
-                            {tab.isLoading ? (
-                                <span className="tab-status running" title="Running" />
-                            ) : tab.lastStatus === "done" ? (
-                                <span className="tab-status done" title="Done" />
-                            ) : tab.lastStatus === "cancelled" ? (
-                                <span className="tab-status cancelled" title="Cancelled" />
-                            ) : tab.lastStatus === "error" ? (
-                                <span className="tab-status error" title="Error" />
-                            ) : null}
-                        </span>
-                        <span className="tab-title">{tab.title || "New chat"}</span>
-                        <button
-                            className="tab-close"
-                            title="Close tab"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onCloseTab(tab.id);
-                            }}
-                        >
-                            ✕
-                        </button>
-                    </div>
-                ))}
-            </div>
-
-            <button className="tab-add" onClick={onNewTab} title="New chat">
-                +
-            </button>
-
-            <div className="tab-bar-spacer" />
-
-            <button className="tab-settings" onClick={onOpenSettings} title="Settings">
-                <img src={settingsIcon} alt="" />
+            <button className="window-bar-btn" onClick={onOpenSettings} title="Settings">
+                <Settings size={17} />
             </button>
         </div>
     );

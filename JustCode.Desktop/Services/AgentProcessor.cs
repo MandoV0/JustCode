@@ -38,43 +38,74 @@ internal sealed class AgentProcessor
         Action<ToolStatus> onToolStatus,
         Action<string> onReasoningDelta)
     {
-        if (!string.IsNullOrWhiteSpace(projectId)) _projects.SetActive(projectId);
+        var projectName = "No project";
+        string scopedRoot;
 
-        var provider = ResolveProvider(configId);
-        provider.ThinkingEffort = thinking;
-        provider.AgentId = agentId;
-
-        using var cts = new CancellationTokenSource();
-        lock (_lock)
+        if (!string.IsNullOrWhiteSpace(projectId))
         {
-            _streams[agentId] = cts;
+            var project = _projects.Get(projectId);
+            if (project is { Path.Length: > 0 })
+            {
+                scopedRoot = Path.GetFullPath(project.Path);
+                if (!string.IsNullOrWhiteSpace(project.Name))
+                    projectName = project.Name;
+            }
+            else
+            {
+                scopedRoot = Path.GetFullPath(Environment.CurrentDirectory);
+            }
+        }
+        else
+        {
+            // No project: operate on the process working directory, never a stale active project.
+            scopedRoot = Path.GetFullPath(Environment.CurrentDirectory);
         }
 
+        // Scope this agent's workspace root to its own async flow so concurrent agents
+        // on different projects never stomp each other's files.
+        ProjectService.ScopedWorkspaceRoot = scopedRoot;
         try
         {
-            await foreach (var chunk in provider.ChatStreamAsync(
-                history,
-                prompt,
-                onReasoningDelta: d => onReasoningDelta(d),
-                onToolStatus: s => onToolStatus(CapToolOutput(s)),
-                cts.Token))
+            var provider = ResolveProvider(configId, projectName, scopedRoot);
+            provider.ThinkingEffort = thinking;
+            provider.AgentId = agentId;
+
+            using var cts = new CancellationTokenSource();
+            lock (_lock)
             {
-                onChunk(chunk);
+                _streams[agentId] = cts;
             }
 
-            return "done";
-        }
-        catch (OperationCanceledException)
-        {
-            DebugLog.Write($"Stream cancelled for agent '{agentId}'");
-            return "cancelled";
+            try
+            {
+                await foreach (var chunk in provider.ChatStreamAsync(
+                    history,
+                    prompt,
+                    onReasoningDelta: d => onReasoningDelta(d),
+                    onToolStatus: s => onToolStatus(CapToolOutput(s)),
+                    cts.Token))
+                {
+                    onChunk(chunk);
+                }
+
+                return "done";
+            }
+            catch (OperationCanceledException)
+            {
+                DebugLog.Write($"Stream cancelled for agent '{agentId}'");
+                return "cancelled";
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    _streams.Remove(agentId);
+                }
+            }
         }
         finally
         {
-            lock (_lock)
-            {
-                _streams.Remove(agentId);
-            }
+            ProjectService.ScopedWorkspaceRoot = null;
         }
     }
 
@@ -89,7 +120,7 @@ internal sealed class AgentProcessor
         }
     }
 
-    private LlmProviderService ResolveProvider(string? configId)
+    private LlmProviderService ResolveProvider(string? configId, string projectName, string workspaceRoot)
     {
         var config = _apiConfigs.Get(configId);
         if (config is null)
@@ -104,17 +135,13 @@ internal sealed class AgentProcessor
             StrictMode = config.StrictMode,
             EnableThinking = config.EnableThinking,
             MaxContextTokens = config.MaxContextTokens,
-            SystemPrompt = BuildSystemPrompt()
+            SystemPrompt = BuildSystemPrompt(projectName, workspaceRoot)
         }, _tools, _permissions);
     }
 
-    private string BuildSystemPrompt()
+    private static string BuildSystemPrompt(string projectName, string workspaceRoot)
     {
-        var projectName = _projects.ActiveProject?.Name;
-        if (string.IsNullOrWhiteSpace(projectName))
-            projectName = "Unnamed project";
-
-        return $"Project: {projectName}\nWorkspace root: {_projects.Root}\n" +
+        return $"Project: {projectName}\nWorkspace root: {workspaceRoot}\n" +
                "You are JustCode, an AI coding assistant. All file and command operations are scoped to the workspace root. " +
                "Prefer the provided tools over guessing file contents.";
     }

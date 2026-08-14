@@ -5,11 +5,12 @@ interface ConfirmDialogProps {
     open: boolean;
     title: string;
     message: string;
+    danger?: boolean;
     onConfirm: () => void;
     onCancel: () => void;
 }
 
-export default function ConfirmDialog({ open, title, message, onConfirm, onCancel }: ConfirmDialogProps) {
+export default function ConfirmDialog({ open, title, message, danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
     useEffect(() => {
         if (!open) return;
         function onKeyDown(e: KeyboardEvent) {
@@ -31,8 +32,8 @@ export default function ConfirmDialog({ open, title, message, onConfirm, onCance
                     <button className="confirm-cancel" onClick={onCancel}>
                         Cancel
                     </button>
-                    <button className="confirm-ok" onClick={onConfirm}>
-                        Confirm
+                    <button className={`confirm-ok${danger ? " danger" : ""}`} onClick={onConfirm}>
+                        {danger ? "Delete" : "Confirm"}
                     </button>
                 </div>
             </div>

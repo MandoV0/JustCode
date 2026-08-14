@@ -41,6 +41,8 @@ public sealed class PermissionService(Action<object> post)
         }
         catch (OperationCanceledException)
         {
+            // Timeout or cancellation: tell the UI to dismiss this approval modal.
+            post(new { kind = "tool_approval", data = new { id, name, arguments, agentId, expired = true } });
             return false;
         }
         finally

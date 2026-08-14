@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Sparkles } from "lucide-react";
 import { type MessageBlock, type ToolRun } from "../../bridge";
 import { type ChatMessage } from "../../messages";
 import { useCopy } from "../../hooks/useCopy";
@@ -87,11 +88,15 @@ export default function ChatView({
     if (messages.length === 0 && !isLoading && !error) {
         return (
             <div className="chat-view">
-                <div className="chat-empty">
-                    <h1 className="chat-empty-title">Welcome to JustCode</h1>
-                    <p className="chat-empty-sub">
-                        Your coding agent. Pick a project, pick a model, or click a suggestion to start.
+                <div className="chat-hero">
+                    <div className="chat-hero-icon">
+                        <Sparkles size={36} strokeWidth={1.2} />
+                    </div>
+                    <h1 className="chat-hero-title">What should we get done?</h1>
+                    <p className="chat-hero-sub">
+                        Pick a project and let the agent read, edit, and run commands for you.
                     </p>
+
                     {(!hasProjects || !hasConfigs) && (
                         <div className="chat-quick-actions">
                             {!hasProjects && (
@@ -285,7 +290,7 @@ function ContextBanner({ text }: { text: string }) {
 }
 
 function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }) {
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(streaming);
 
     return (
         <div className={`thinking-block ${expanded ? "open" : ""} ${streaming ? "streaming" : ""}`}>

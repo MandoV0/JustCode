@@ -45,7 +45,12 @@ export interface UseTabsOptions {
     ) => Promise<void>;
     refreshSessions: () => Promise<void>;
     toast: (message: string, type?: Toast["type"]) => void;
-    confirmAction: (title: string, message: string, action: () => void | Promise<void>) => void;
+    confirmAction: (
+        title: string,
+        message: string,
+        action: () => void | Promise<void>,
+        danger?: boolean,
+    ) => void;
 }
 
 export function useTabs({ persistSession, refreshSessions, toast, confirmAction }: UseTabsOptions) {
@@ -154,7 +159,7 @@ export function useTabs({ persistSession, refreshSessions, toast, confirmAction 
             } catch (err) {
                 toast(`Failed to delete chat: ${String(err)}`, "error");
             }
-        });
+        }, true);
     }
 
     async function handleForkChat(tabId: string) {
@@ -180,9 +185,9 @@ export function useTabs({ persistSession, refreshSessions, toast, confirmAction 
             const next = tab.messages.filter((m) => m.id !== msgId);
             if (next.length === tab.messages.length) return;
             updateTab(tabId, (t) => ({ ...t, messages: next }));
-            await persistSession(tabId, tab.title, tab.projectId, tab.createdAt, next);
+            await persistSession(tab.sessionId, tab.title, tab.projectId, tab.createdAt, next);
             toast("Message deleted", "success");
-        });
+        }, true);
     }
 
     function handleStop(tabId: string) {
@@ -226,13 +231,16 @@ export function useTabs({ persistSession, refreshSessions, toast, confirmAction 
                 {
                     onChunk: (chunk) => {
                         reply += String(chunk);
-                        setAssistantBlocks(tabId, assistantId, appendChunk(blocksRef.current, String(chunk)));
+                        blocksRef.current = appendChunk(blocksRef.current, String(chunk));
+                        setAssistantBlocks(tabId, assistantId, blocksRef.current);
                     },
                     onToolStatus: (status) => {
-                        setAssistantBlocks(tabId, assistantId, applyToolStatus(blocksRef.current, status));
+                        blocksRef.current = applyToolStatus(blocksRef.current, status);
+                        setAssistantBlocks(tabId, assistantId, blocksRef.current);
                     },
                     onReasoningDelta: (delta) => {
-                        setAssistantBlocks(tabId, assistantId, appendReasoning(blocksRef.current, String(delta)));
+                        blocksRef.current = appendReasoning(blocksRef.current, String(delta));
+                        setAssistantBlocks(tabId, assistantId, blocksRef.current);
                     },
                 },
             );
@@ -251,10 +259,10 @@ export function useTabs({ persistSession, refreshSessions, toast, confirmAction 
                 messages: final,
                 lastStatus: result === "cancelled" ? "cancelled" : "done",
             }));
-            await persistSession(tabId, title, tab.projectId, tab.createdAt, final);
+            await persistSession(tab.sessionId, title, tab.projectId, tab.createdAt, final);
         } catch (err) {
             updateTab(tabId, (t) => ({ ...t, error: String(err), lastStatus: "error" }));
-            await persistSession(tabId, title, tab.projectId, tab.createdAt, next);
+            await persistSession(tab.sessionId, title, tab.projectId, tab.createdAt, next);
         } finally {
             updateTab(tabId, (t) => ({ ...t, isLoading: false }));
         }

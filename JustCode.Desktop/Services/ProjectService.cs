@@ -20,6 +20,20 @@ public sealed class Project
 /// </summary>
 public sealed class ProjectService
 {
+    /// <summary>
+    /// Per-agent workspace root, scoped to the current agent's async execution flow.
+    /// Lets concurrent agents on different projects run without stomping each other's
+    /// root, and lets a chat with no project avoid a stale native active project.
+    /// Falls back to the global active-project root when unset.
+    /// </summary>
+    private static readonly AsyncLocal<string?> ScopedRoot = new();
+
+    public static string? ScopedWorkspaceRoot
+    {
+        get => ScopedRoot.Value;
+        set => ScopedRoot.Value = value;
+    }
+
     private readonly string _projectsPath;
     private readonly string _activePath;
 
@@ -33,10 +47,17 @@ public sealed class ProjectService
         Load();
     }
 
-    public string Root =>
-        ActiveProject is { Path.Length: > 0 } project
-            ? Path.GetFullPath(project.Path)
-            : Path.GetFullPath(Environment.CurrentDirectory);
+    public string Root
+    {
+        get
+        {
+            var root = ActiveProject is { Path.Length: > 0 } project
+                ? Path.GetFullPath(project.Path)
+                : Path.GetFullPath(Environment.CurrentDirectory);
+
+            return root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
 
     public IReadOnlyList<Project> List() => _projects;
 
@@ -44,6 +65,14 @@ public sealed class ProjectService
 
     public Project? ActiveProject =>
         _activeId is null ? null : _projects.FirstOrDefault(p => p.Id == _activeId);
+
+    public Project? Get(string id) => _projects.FirstOrDefault(p => p.Id == id);
+
+    /// <summary>The workspace root for the current agent flow, falling back to the global root.</summary>
+    public string ResolveRoot() =>
+        !string.IsNullOrWhiteSpace(ScopedWorkspaceRoot)
+            ? ScopedWorkspaceRoot!
+            : Root;
 
     public void Save(Project project)
     {
@@ -91,12 +120,34 @@ public sealed class ProjectService
         fullPath = string.Empty;
         error = null;
 
-        var root = Root;
-        var full = Path.GetFullPath(Path.Combine(root, path));
+        var root = ResolveRoot();
+        var candidate = (path ?? string.Empty).Trim().Trim('"');
+        if (candidate.Length == 0)
+        {
+            error = "Path must not be empty.";
+            return false;
+        }
 
-        var normalizedRoot = root + Path.DirectorySeparatorChar;
-        if (!full.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-            !full.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        string full;
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows: drive-qualified paths (C:\..., C:/...) are absolute; everything else is
+            // workspace-relative. Strip leading separators so "/README.md" or "\README.md"
+            // does not resolve to the current drive root.
+            full = IsDriveQualified(candidate)
+                ? Path.GetFullPath(candidate)
+                : Path.GetFullPath(Path.Combine(
+                    root,
+                    candidate.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
+        }
+        else
+        {
+            // Unix: Path.Combine already keeps rooted paths (leading '/') absolute and
+            // joins everything else to the workspace root.
+            full = Path.GetFullPath(Path.Combine(root, candidate));
+        }
+
+        if (!IsWithin(full, root))
         {
             error = "Access outside of workspace is forbidden.";
             return false;
@@ -110,6 +161,16 @@ public sealed class ProjectService
 
         fullPath = full;
         return true;
+    }
+
+    private static bool IsDriveQualified(string path) =>
+        path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':';
+
+    private static bool IsWithin(string full, string root)
+    {
+        var normalizedRoot = root + Path.DirectorySeparatorChar;
+        return full.Equals(root, StringComparison.OrdinalIgnoreCase)
+            || full.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     private void Load()

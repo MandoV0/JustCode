@@ -4,7 +4,7 @@ using JustCode.Tools;
 
 namespace JustCode.Services;
 
-public sealed record ChatTurn(string Role, string Text, string? Reasoning = null, List<JsonElement>? Blocks = null);
+public sealed record ChatTurn(string Role, string Text, string? Reasoning = null, List<JsonElement>? Blocks = null, bool Interrupted = false);
 
 public sealed record ToolStatus(string Name, string Arguments, string State, string? Output = null, string? CallId = null, bool Success = true, List<DiffLine>? Diff = null);
 
@@ -51,8 +51,29 @@ public abstract class LlmProviderService(List<ITool> tools, PermissionService? p
         }
 
         DebugLog.Write($"[{GetType().Name}] Executing tool: {name}");
-        var argsElement = JsonSerializer.Deserialize<JsonElement>(arguments, Json.Options);
 
-        return await tool.ExecuteAsync(argsElement, ct);
+        try
+        {
+            JsonElement argsElement;
+            try
+            {
+                argsElement = JsonSerializer.Deserialize<JsonElement>(arguments, Json.Options);
+            }
+            catch (JsonException)
+            {
+                return ToolResult.Error($"Tool '{name}' received malformed arguments (not valid JSON).");
+            }
+
+            return await tool.ExecuteAsync(argsElement, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            DebugLog.Write($"[{GetType().Name}] Tool '{name}' threw: {ex}");
+            return ToolResult.Error($"Tool '{name}' failed: {ex.Message}");
+        }
     }
 }

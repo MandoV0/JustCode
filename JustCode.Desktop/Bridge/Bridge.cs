@@ -21,6 +21,15 @@ internal sealed class Bridge
     private readonly AgentProcessor _agents;
     private LocalServer? _server;
 
+    private readonly object _chunkLock = new();
+    private readonly Dictionary<int, ChunkBuffer> _chunkBuffers = new();
+
+    private sealed class ChunkBuffer
+    {
+        public StringBuilder Text { get; } = new();
+        public Timer? Timer { get; set; }
+    }
+
     public Bridge(NativeWebView webView, List<ITool> tools, SessionService sessions, AppDataService appData, ApiConfigService apiConfigs, ProjectService projects)
     {
         _webView = webView;
@@ -95,6 +104,7 @@ internal sealed class Bridge
         try
         {
             data = await DispatchAsync(request.Id, request.Cmd, request.Args);
+            FlushAllChunks();
             Post(new Response { Kind = "response", Id = request.Id, Ok = true, Data = data });
         }
         catch (Exception ex)
@@ -219,9 +229,17 @@ internal sealed class Bridge
                     thinking,
                     configId,
                     projectId,
-                    onChunk: c => Post(new { kind = "chunk", id, data = c }),
-                    onToolStatus: s => Post(new { kind = "tool_status", id, data = s }),
-                    onReasoningDelta: d => Post(new { kind = "reasoning_chunk", id, data = d }));
+                    onChunk: c => PostChunk(id, c),
+                    onToolStatus: s =>
+                    {
+                        FlushChunk(id);
+                        Post(new { kind = "tool_status", id, data = s });
+                    },
+                    onReasoningDelta: d =>
+                    {
+                        FlushChunk(id);
+                        Post(new { kind = "reasoning_chunk", id, data = d });
+                    });
             }
 
             case "cancel_stream":
@@ -288,6 +306,8 @@ internal sealed class Bridge
         var blocks = el.TryGetProperty("blocks", out var blocksProp) && blocksProp.ValueKind == JsonValueKind.Array
             ? blocksProp.EnumerateArray().ToList()
             : null;
+        var interrupted = el.TryGetProperty("interrupted", out var interruptedProp)
+            && interruptedProp.ValueKind == JsonValueKind.True;
 
         string? reasoning = null;
         if (role == "assistant" && blocks is not null)
@@ -306,7 +326,7 @@ internal sealed class Bridge
             if (sb.Length > 0) reasoning = sb.ToString();
         }
 
-        return new ChatTurn(role, text, reasoning, blocks);
+        return new ChatTurn(role, text, reasoning, blocks, interrupted);
     }
 
     private void Post(object payload)
@@ -323,6 +343,51 @@ internal sealed class Bridge
                 DebugLog.Write($"Post to JS FAILED: {ex}");
             }
         });
+    }
+
+    private void PostChunk(int id, string text)
+    {
+        lock (_chunkLock)
+        {
+            if (!_chunkBuffers.TryGetValue(id, out var buf))
+            {
+                buf = new ChunkBuffer();
+                _chunkBuffers[id] = buf;
+                buf.Timer = new Timer(_ => FlushChunk(id), null, 50, Timeout.Infinite);
+            }
+
+            buf.Text.Append(text);
+        }
+    }
+
+    private void FlushChunk(int id)
+    {
+        lock (_chunkLock)
+        {
+            if (!_chunkBuffers.Remove(id, out var buf))
+                return;
+
+            buf.Timer?.Dispose();
+            var text = buf.Text.ToString();
+            if (text.Length == 0)
+                return;
+
+            Post(new { kind = "chunk", id, data = text });
+        }
+    }
+
+    private void FlushAllChunks()
+    {
+        List<int> ids;
+        lock (_chunkLock)
+        {
+            ids = _chunkBuffers.Keys.ToList();
+        }
+
+        foreach (var id in ids)
+        {
+            FlushChunk(id);
+        }
     }
 
     private sealed class Request
