@@ -2,6 +2,13 @@
 
 A desktop AI coding assistant built on Avalonia + React. A .NET shell hosts a web UI and runs an LLM-powered agent that can read, edit, search, and run commands inside your workspace.
 
+## Screenshots
+### 20.08.2026
+<img width="2559" height="1389" alt="Screenshot 2026-08-20 210851" src="https://github.com/user-attachments/assets/2b3b865f-e67d-4223-9a09-41de709ef672" />
+<img width="1350" height="858" alt="Screenshot 2026-08-20 202801" src="https://github.com/user-attachments/assets/d8066328-0e64-4b65-ad40-4408c4832387" />
+<img width="2559" height="1388" alt="Screenshot 2026-08-20 210955" src="https://github.com/user-attachments/assets/6f981093-c8ce-413b-98bd-a32e6e0548c6" />
+
+
 ## Overview
 
 justcode combines a native desktop shell with a modern web frontend:
