@@ -52,10 +52,10 @@ public sealed class ProjectService
         get
         {
             var root = ActiveProject is { Path.Length: > 0 } project
-                ? Path.GetFullPath(project.Path)
-                : Path.GetFullPath(Environment.CurrentDirectory);
+                ? project.Path
+                : Environment.CurrentDirectory;
 
-            return root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return NormalizeRoot(root);
         }
     }
 
@@ -70,12 +70,15 @@ public sealed class ProjectService
 
     /// <summary>The workspace root for the current agent flow, falling back to the global root.</summary>
     public string ResolveRoot() =>
-        !string.IsNullOrWhiteSpace(ScopedWorkspaceRoot)
-            ? ScopedWorkspaceRoot!
-            : Root;
+        string.IsNullOrWhiteSpace(ScopedWorkspaceRoot)
+            ? Root
+            : NormalizeRoot(ScopedWorkspaceRoot!);
 
     public void Save(Project project)
     {
+        if (project.Path.Length > 0)
+            project.Path = NormalizeRoot(project.Path);
+
         var index = _projects.FindIndex(p => p.Id == project.Id);
         if (index >= 0)
         {
@@ -162,6 +165,9 @@ public sealed class ProjectService
         fullPath = full;
         return true;
     }
+
+    private static string NormalizeRoot(string root) =>
+        Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     private static bool IsDriveQualified(string path) =>
         path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':';
